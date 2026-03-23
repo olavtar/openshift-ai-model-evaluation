@@ -1,0 +1,9 @@
+dependencies:
+- name: pgvector
+  repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  version: 0.5.1
+- name: llm-service
+  repository: https://rh-ai-quickstart.github.io/ai-architecture-charts
+  version: 0.5.2
+digest: sha256:5152c10e753d556489cfd2eeb10fa8e00570c94b8940abacecba3a6c209deccb
+generated: "2026-03-23T11:35:49.472396-07:00"

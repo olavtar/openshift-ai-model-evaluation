@@ -1,32 +1,24 @@
-"""
-Example database models
+# This project was developed with assistance from AI tools.
 
-This file contains example models to demonstrate SQLAlchemy patterns.
-Feel free to delete the Dog model and replace with your own models.
-"""
+"""Database models for model evaluation."""
 
-from sqlalchemy import Column, Integer, String, DateTime, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, func
+
 from .database import Base
 
 
-class Dog(Base):
-    """
-    Example model - feel free to delete this and add your own models.
+class ModelConfig(Base):
+    """Configuration for a served model available for evaluation."""
 
-    This demonstrates:
-    - Table definition with __tablename__
-    - Primary key with auto-increment
-    - String columns with max length
-    - Timestamp columns with server defaults
-    """
-    __tablename__ = "dog"
+    __tablename__ = "model_config"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False)
-    breed = Column(String(100), nullable=True)
-    age = Column(Integer, nullable=True)
+    name = Column(String(200), nullable=False, unique=True)
+    endpoint_url = Column(String(500), nullable=False)
+    deployment_mode = Column(String(50), nullable=False, default="maas")
+    is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    def __repr__(self):
-        return f"<Dog(id={self.id}, name='{self.name}', breed='{self.breed}')>"
+    def __repr__(self) -> str:
+        return f"<ModelConfig(id={self.id}, name='{self.name}', mode='{self.deployment_mode}')>"
