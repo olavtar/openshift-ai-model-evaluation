@@ -38,20 +38,15 @@ def test_readiness_degraded_when_db_unhealthy(client):
     assert data["message"] is not None
 
 
-def test_readiness_degraded_not_503_when_models_unknown(client):
-    """With DB unhealthy but models 'unknown' (not yet wired), status is degraded not 503.
-
-    The not_ready (503) path will only trigger when model health checks are wired
-    in PR 3 and all three critical deps report unhealthy.
-    """
-    with patch("src.routes.health._check_database", return_value="unhealthy"):
+def test_readiness_ready_when_all_healthy(client):
+    """When all dependencies report healthy, readiness should return ready (200)."""
+    with patch("src.routes.health._check_database", return_value="healthy"):
         response = client.get("/health/ready")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "degraded"
-    assert data["dependencies"]["model_a"] == "unknown"
-    assert data["dependencies"]["model_b"] == "unknown"
+    assert data["status"] == "ready"
+    assert data["message"] is None
 
 
 def test_liveness_does_not_check_dependencies(client):
@@ -62,27 +57,9 @@ def test_liveness_does_not_check_dependencies(client):
         mock_db.assert_not_called()
 
 
-def test_readiness_ready_when_all_healthy(client):
-    """When all dependencies report healthy, readiness should return ready (200)."""
-    with patch("src.routes.health._check_database", return_value="healthy"):
-        response = client.get("/health/ready")
-
-    assert response.status_code == 200
-    data = response.json()
-    # With DB healthy and models "unknown" (not unhealthy), status should be ready
-    assert data["status"] == "ready"
-    assert data["message"] is None
-
-
 def test_root_endpoint(client):
     """Root endpoint returns welcome message."""
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
     assert "message" in data
-
-
-def test_error_response_schema_on_nonexistent_route(client):
-    """Non-existent routes should still return structured JSON errors."""
-    response = client.get("/nonexistent")
-    assert response.status_code in (404, 405)

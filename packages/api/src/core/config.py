@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "openshift-ai-model-evaluation"
     DEBUG: bool = False
-    LOG_LEVEL: str = "INFO"
 
     # CORS
     ALLOWED_HOSTS: list[str] = ["http://localhost:5173"]
