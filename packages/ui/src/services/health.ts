@@ -1,11 +1,12 @@
+// This project was developed with assistance from AI tools.
 
-import { HealthSchema, type Health } from '../schemas/health';
+import { ReadinessSchema, type Readiness } from '../schemas/health';
 
-export const getHealth = async (): Promise<Health> => {
-  const response = await fetch('/api/health/');
-  if (!response.ok) {
-    throw new Error('Failed to fetch health');
-  }
-  const data = await response.json();
-  return HealthSchema.parse(data);
+export const getReadiness = async (): Promise<Readiness> => {
+    const response = await fetch('/api/health/ready');
+    if (!response.ok) {
+        throw new Error('Failed to fetch health');
+    }
+    const data = await response.json();
+    return ReadinessSchema.parse(data);
 };
