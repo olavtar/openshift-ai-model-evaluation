@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .admin import setup_admin
 from .core.config import settings
-from .routes import health
+from .routes import health, models
 
 app = FastAPI(
     title="OpenShift AI Model Evaluation API",
@@ -23,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(models.router, prefix="/models", tags=["models"])
 
 setup_admin(app)
 

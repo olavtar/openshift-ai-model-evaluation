@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends
 from starlette.responses import JSONResponse
 
+from ..core.config import settings
 from ..schemas.health import LivenessResponse, ReadinessResponse
 
 try:
@@ -61,11 +62,10 @@ async def readiness(
     # Database check
     deps["database"] = await _check_database(db_service)
 
-    # Model endpoints are not integrated yet; placeholder for PR 3.
-    # When model health checks are wired up these will call the vLLM /health
-    # endpoint and return healthy/unhealthy accordingly.
-    deps["model_a"] = "unknown"
-    deps["model_b"] = "unknown"
+    # Model config check -- reports whether models are configured (not whether
+    # the remote endpoint is reachable, which would add latency to the probe).
+    deps["model_a"] = "healthy" if settings.MODEL_A_NAME else "unhealthy"
+    deps["model_b"] = "healthy" if settings.MODEL_B_NAME else "unhealthy"
 
     unhealthy = [k for k, v in deps.items() if v == "unhealthy"]
 
