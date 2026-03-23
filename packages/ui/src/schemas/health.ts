@@ -1,15 +1,13 @@
+// This project was developed with assistance from AI tools.
 
 import { z } from 'zod';
 
-export const ServiceSchema = z.object({
-  name: z.string(),
-  status: z.enum(['healthy', 'degraded', 'down', 'unknown']),
-  message: z.string(),
-  version: z.string(),
-  start_time: z.string(),
+export const ReadinessSchema = z.object({
+    status: z.enum(['ready', 'degraded', 'not_ready']),
+    service: z.string(),
+    timestamp: z.string(),
+    dependencies: z.record(z.string()),
+    message: z.string().nullable().optional(),
 });
 
-export const HealthSchema = z.array(ServiceSchema);
-
-export type Service = z.infer<typeof ServiceSchema>;
-export type Health = z.infer<typeof HealthSchema>;
+export type Readiness = z.infer<typeof ReadinessSchema>;

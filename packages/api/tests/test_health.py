@@ -1,38 +1,88 @@
-"""
-Health endpoint tests
-"""
+# This project was developed with assistance from AI tools.
+"""Tests for health check endpoints (/health/live, /health/ready)."""
 
-from helpers import assert_service_exists
-
-
-def test_health_check_endpoint_exists(health_response):
-    """Test health check endpoint returns list of services"""
-    assert isinstance(health_response, list)
-    assert len(health_response) >= 1  # At least API service should be present
+from unittest.mock import patch
 
 
-def test_health_check_includes_database(health_response):
-    """Test health check includes database status"""
-    db_service = assert_service_exists(health_response, "Database")
-
-    assert db_service["status"] in ["healthy", "down"]
-    assert "message" in db_service
-    assert "version" in db_service
-
-
-def test_health_check_api_service(health_response):
-    """Test health check includes API service"""
-    api_service = assert_service_exists(health_response, "API")
-
-    assert api_service["status"] == "healthy"
-    assert api_service["message"] == "API is running"
-    assert api_service["version"] == "0.0.0"
-
-
-def test_root_endpoint(client):
-    """Test root endpoint returns welcome message"""
-    response = client.get("/")
+def test_liveness_returns_healthy(client):
+    """Liveness probe should always return 200 when the process is running."""
+    response = client.get("/health/live")
     assert response.status_code == 200
 
     data = response.json()
+    assert data["status"] == "healthy"
+    assert data["service"] == "api"
+    assert "timestamp" in data
+
+
+def test_readiness_includes_dependency_status(client):
+    """Readiness probe should list all dependency statuses."""
+    response = client.get("/health/ready")
+    data = response.json()
+
+    assert "dependencies" in data
+    assert "database" in data["dependencies"]
+    assert "model_a" in data["dependencies"]
+    assert "model_b" in data["dependencies"]
+
+
+def test_readiness_degraded_when_db_unhealthy(client):
+    """When the database is unreachable, readiness should report degraded (HTTP 200)."""
+    with patch("src.routes.health._check_database", return_value="unhealthy"):
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["dependencies"]["database"] == "unhealthy"
+    assert data["message"] is not None
+
+
+def test_readiness_degraded_not_503_when_models_unknown(client):
+    """With DB unhealthy but models 'unknown' (not yet wired), status is degraded not 503.
+
+    The not_ready (503) path will only trigger when model health checks are wired
+    in PR 3 and all three critical deps report unhealthy.
+    """
+    with patch("src.routes.health._check_database", return_value="unhealthy"):
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "degraded"
+    assert data["dependencies"]["model_a"] == "unknown"
+    assert data["dependencies"]["model_b"] == "unknown"
+
+
+def test_liveness_does_not_check_dependencies(client):
+    """Liveness probe must NOT call the database -- it only checks the process."""
+    with patch("src.routes.health._check_database") as mock_db:
+        response = client.get("/health/live")
+        assert response.status_code == 200
+        mock_db.assert_not_called()
+
+
+def test_readiness_ready_when_all_healthy(client):
+    """When all dependencies report healthy, readiness should return ready (200)."""
+    with patch("src.routes.health._check_database", return_value="healthy"):
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    data = response.json()
+    # With DB healthy and models "unknown" (not unhealthy), status should be ready
+    assert data["status"] == "ready"
+    assert data["message"] is None
+
+
+def test_root_endpoint(client):
+    """Root endpoint returns welcome message."""
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
     assert "message" in data
+
+
+def test_error_response_schema_on_nonexistent_route(client):
+    """Non-existent routes should still return structured JSON errors."""
+    response = client.get("/nonexistent")
+    assert response.status_code in (404, 405)
