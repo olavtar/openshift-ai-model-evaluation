@@ -1,14 +1,26 @@
 apiVersion: v2
-name: ai-quickstart-template
-description: A ready-made template for creating new AI Quickstarts
+name: model-evaluation
+description: OpenShift AI Model Evaluation QuickStart
 type: application
 version: 0.1.0
 appVersion: "latest"
 keywords:
-  - ai-quickstart-template
-home: https://github.com/example/ai-quickstart-template
+  - model-evaluation
+  - openshift-ai
+  - quickstart
+home: https://github.com/rh-ai-quickstart/model-evaluation
 sources:
-  - https://github.com/example/ai-quickstart-template
+  - https://github.com/rh-ai-quickstart/model-evaluation
 maintainers:
-  - name: Development Team
-    email: dev@example.com
+  - name: Red Hat AI QuickStart Team
+
+dependencies:
+  - name: pgvector
+    version: "0.5.1"
+    repository: "https://rh-ai-quickstart.github.io/ai-architecture-charts"
+    condition: pgvector.enabled
+
+  - name: llm-service
+    version: "0.5.2"
+    repository: "https://rh-ai-quickstart.github.io/ai-architecture-charts"
+    condition: llm-service.enabled

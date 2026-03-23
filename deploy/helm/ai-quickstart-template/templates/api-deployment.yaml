@@ -46,19 +46,34 @@ spec:
                 secretKeyRef:
                   name: {{ include "ai-quickstart-template.fullname" . }}-secret
                   key: ALLOWED_HOSTS
+            - name: MODEL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ai-quickstart-template.fullname" . }}-secret
+                  key: MODEL_API_TOKEN
+            - name: MAAS_ENDPOINT
+              value: {{ .Values.models.maasEndpoint | quote }}
+            - name: MODEL_A_NAME
+              value: {{ .Values.models.modelA.name | quote }}
+            - name: MODEL_A_DEPLOYMENT_MODE
+              value: {{ .Values.models.modelA.deploymentMode | quote }}
+            - name: MODEL_B_NAME
+              value: {{ .Values.models.modelB.name | quote }}
+            - name: MODEL_B_DEPLOYMENT_MODE
+              value: {{ .Values.models.modelB.deploymentMode | quote }}
           {{- if .Values.api.healthCheck.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.api.healthCheck.path }}
+              path: {{ .Values.api.healthCheck.liveness.path }}
               port: http
-            initialDelaySeconds: {{ .Values.api.healthCheck.initialDelaySeconds }}
-            periodSeconds: {{ .Values.api.healthCheck.periodSeconds }}
+            initialDelaySeconds: {{ .Values.api.healthCheck.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.healthCheck.liveness.periodSeconds }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.api.healthCheck.path }}
+              path: {{ .Values.api.healthCheck.readiness.path }}
               port: http
-            initialDelaySeconds: {{ .Values.api.healthCheck.initialDelaySeconds }}
-            periodSeconds: {{ .Values.api.healthCheck.periodSeconds }}
+            initialDelaySeconds: {{ .Values.api.healthCheck.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.healthCheck.readiness.periodSeconds }}
           {{- end }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}

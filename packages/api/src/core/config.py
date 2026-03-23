@@ -15,8 +15,16 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = (
-        "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
+        "postgresql+asyncpg://user:password@localhost:5432/model-evaluation"
     )
+
+    # Model serving (MaaS defaults)
+    MAAS_ENDPOINT: str = "https://maas.apps.prod.rhoai.rh-aiservices-bu.com"
+    MODEL_API_TOKEN: str = ""
+    MODEL_A_NAME: str = "granite-3.1-8b-instruct"
+    MODEL_A_DEPLOYMENT_MODE: str = "maas"
+    MODEL_B_NAME: str = "llama-3.1-8b-instruct"
+    MODEL_B_DEPLOYMENT_MODE: str = "maas"
 
     model_config = {"env_file": ".env"}
 

@@ -1,39 +1,56 @@
-# Default values for ai-quickstart-template
+# Default values for model-evaluation
 global:
   imageRegistry: quay.io
-  imageRepository: ai-quickstart-template
+  imageRepository: rh-ai-quickstart
   imageTag: latest
   imagePullPolicy: Always
   storageClass: ""
 
-# Secrets configuration - these values should be overridden with actual secrets
+# Model serving configuration
+models:
+  # MaaS endpoint (RHOAI 3.x default - zero GPU required)
+  maasEndpoint: "https://maas.apps.prod.rhoai.rh-aiservices-bu.com"
+  # Default models for A/B comparison
+  modelA:
+    name: "granite-3.1-8b-instruct"
+    deploymentMode: "maas"
+  modelB:
+    name: "llama-3.1-8b-instruct"
+    deploymentMode: "maas"
+
+# Secrets configuration - override with actual secrets
 secrets:
   # Database secrets
-  POSTGRES_DB: "ai-quickstart-template"
+  POSTGRES_DB: "model-evaluation"
   POSTGRES_USER: "user"
   POSTGRES_PASSWORD: "changeme"
 
   # API secrets
-  DATABASE_URL: "postgresql+asyncpg://user:changeme@ai-quickstart-template-db:5432/ai-quickstart-template"
+  DATABASE_URL: "postgresql+asyncpg://user:changeme@model-evaluation-db:5432/model-evaluation"
   DEBUG: "false"
   ALLOWED_HOSTS: '["*"]'
 
+  # Model API tokens (MaaS authentication)
+  MODEL_API_TOKEN: ""
+
   # UI secrets
-  VITE_API_BASE_URL: "http://localhost:8000"
+  VITE_API_BASE_URL: ""
   VITE_ENVIRONMENT: "production"
+
 # OpenShift Routes configuration
 routes:
   enabled: true
-  annotations: {}
-  sharedHost: ""  # Set custom hostname or leave empty (will use ui.host fallback)
+  annotations:
+    haproxy.router.openshift.io/timeout: "600s"
+  sharedHost: ""
   ui:
-    host: ""  # Used as fallback if sharedHost is empty
+    host: ""
     tls:
       enabled: true
       termination: edge
       insecureEdgeTerminationPolicy: Redirect
   api:
-    host: ""  # Ignored - uses sharedHost or ui.host
+    host: ""
     tls:
       enabled: true
       termination: edge
@@ -42,9 +59,9 @@ routes:
 # API configuration
 api:
   enabled: true
-  name: ai-quickstart-template-api
+  name: model-evaluation-api
   image:
-    repository: ai-quickstart-template-api
+    repository: model-evaluation-api
     tag: latest
   service:
     type: ClusterIP
@@ -59,15 +76,21 @@ api:
       cpu: "1000m"
   healthCheck:
     enabled: true
-    path: /health
-    initialDelaySeconds: 30
-    periodSeconds: 10
+    liveness:
+      path: /health/live
+      initialDelaySeconds: 10
+      periodSeconds: 10
+    readiness:
+      path: /health/ready
+      initialDelaySeconds: 15
+      periodSeconds: 10
+
 # UI configuration
 ui:
   enabled: true
-  name: ai-quickstart-template-ui
+  name: model-evaluation-ui
   image:
-    repository: ai-quickstart-template-ui
+    repository: model-evaluation-ui
     tag: latest
   service:
     type: ClusterIP
@@ -85,10 +108,11 @@ ui:
     path: /
     initialDelaySeconds: 10
     periodSeconds: 10
-# Database configuration
+
+# Database configuration (self-managed pgvector)
 database:
   enabled: true
-  name: ai-quickstart-template-db
+  name: model-evaluation-db
   image:
     repository: pgvector/pgvector
     tag: pg16
@@ -106,23 +130,33 @@ database:
     limits:
       memory: "512Mi"
       cpu: "500m"
+
 # Database migration configuration
 migration:
   enabled: true
-  name: ai-quickstart-template-migration
+  name: model-evaluation-migration
   image:
-    repository: ai-quickstart-template-db
+    repository: model-evaluation-api
     tag: latest
   restartPolicy: Never
   backoffLimit: 1
   ttlSecondsAfterFinished: 86400
   resources:
     requests:
-      memory: "1Gi"
+      memory: "512Mi"
       cpu: "250m"
     limits:
-      memory: "2Gi"
-      cpu: "1000m"
+      memory: "1Gi"
+      cpu: "500m"
+
+# Subchart: pgvector (from ai-architecture-charts)
+pgvector:
+  enabled: false
+
+# Subchart: llm-service (from ai-architecture-charts)
+llm-service:
+  enabled: false
+
 # ServiceAccount
 serviceAccount:
   create: true
