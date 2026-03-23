@@ -5,6 +5,7 @@ import { Hero } from '../components/hero/hero';
 import { useHealth } from '../hooks/health';
 import { Monitor, Server, Database } from 'lucide-react';
 import { ServiceList } from '../components/service-list/service-list';
+import { ModelComparison } from '../components/model-comparison/model-comparison';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Route = createFileRoute('/' as any)({
@@ -82,6 +83,10 @@ function Index() {
                     {readiness?.message && (
                         <p className="mt-3 text-xs text-muted-foreground">{readiness.message}</p>
                     )}
+                </div>
+
+                <div className="mt-6">
+                    <ModelComparison />
                 </div>
 
                 <div className="mt-6">
