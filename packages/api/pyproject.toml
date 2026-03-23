@@ -21,6 +21,8 @@ dependencies = [
     "asyncpg>=0.29.0",
     "greenlet>=3.2.3",
     "sqladmin>=0.16.0",
+    "pypdf>=4.0.0",
+    "python-multipart>=0.0.9",
 
     "ai-quickstart-template-db",
 ]
@@ -32,6 +34,7 @@ dev = [
     "httpx>=0.25.0",
     "ruff>=0.1.0",
     "mypy>=1.7.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [project.urls]
