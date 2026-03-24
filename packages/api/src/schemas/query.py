@@ -40,3 +40,4 @@ class QueryResponse(BaseModel):
     model: str
     sources: list[SourceChunk]
     usage: UsageInfo | None = None
+    low_confidence: bool = False
