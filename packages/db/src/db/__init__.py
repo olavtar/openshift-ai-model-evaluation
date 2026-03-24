@@ -2,7 +2,7 @@ __version__ = "0.0.0"
 
 # Export main database classes and functions
 from .database import DatabaseService, get_db_service, get_db, Base
-from .models import Chunk, Document, ModelConfig
+from .models import EMBEDDING_DIMENSION, Chunk, Document, ModelConfig
 
 __all__ = [
     "DatabaseService",
@@ -11,6 +11,7 @@ __all__ = [
     "Base",
     "Chunk",
     "Document",
+    "EMBEDDING_DIMENSION",
     "ModelConfig",
     "__version__",
 ]

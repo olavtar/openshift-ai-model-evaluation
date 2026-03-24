@@ -61,6 +61,8 @@ spec:
               value: {{ .Values.models.modelB.name | quote }}
             - name: MODEL_B_DEPLOYMENT_MODE
               value: {{ .Values.models.modelB.deploymentMode | quote }}
+            - name: EMBEDDING_MODEL
+              value: {{ .Values.models.embeddingModel | quote }}
           {{- if .Values.api.healthCheck.enabled }}
           livenessProbe:
             httpGet:

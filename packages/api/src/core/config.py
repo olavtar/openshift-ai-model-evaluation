@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     MODEL_B_NAME: str = "llama-3.1-8b-instruct"
     MODEL_B_DEPLOYMENT_MODE: str = "maas"
 
+    # Embedding model
+    EMBEDDING_MODEL: str = "nomic-embed-text-v1.5"
+
     model_config = {"env_file": ".env"}
 
 

@@ -17,6 +17,8 @@ models:
   modelB:
     name: "llama-3.1-8b-instruct"
     deploymentMode: "maas"
+  # Embedding model for RAG pipeline
+  embeddingModel: "nomic-embed-text-v1.5"
 
 # Secrets configuration - override with actual secrets
 secrets:

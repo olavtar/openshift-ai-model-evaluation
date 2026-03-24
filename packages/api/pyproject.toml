@@ -23,6 +23,7 @@ dependencies = [
     "sqladmin>=0.16.0",
     "pypdf>=4.0.0",
     "python-multipart>=0.0.9",
+    "httpx>=0.25.0",
 
     "ai-quickstart-template-db",
 ]

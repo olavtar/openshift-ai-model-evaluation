@@ -78,7 +78,7 @@ def test_chunk_has_required_columns():
     columns = {c.name for c in Chunk.__table__.columns}
     expected = {
         "id", "document_id", "text", "source_document", "page_number",
-        "section_path", "element_type", "token_count", "created_at",
+        "section_path", "element_type", "token_count", "embedding", "created_at",
     }
     assert expected == columns
 

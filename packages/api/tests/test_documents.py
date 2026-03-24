@@ -36,6 +36,14 @@ def _mock_extract(pages: list[dict]):
     )
 
 
+def _mock_no_embeddings():
+    """Return a patch that skips embedding generation."""
+    return patch(
+        "src.routes.documents.generate_embeddings",
+        return_value=None,
+    )
+
+
 # --- Fixtures ---
 
 
@@ -85,7 +93,7 @@ def test_upload_pdf_success(client):
         {"page_number": 1, "text": "Page one content"},
         {"page_number": 2, "text": "Page two content"},
     ]
-    with _mock_extract(mock_pages):
+    with _mock_extract(mock_pages), _mock_no_embeddings():
         response = client.post(
             "/documents/upload",
             files={"file": ("test.pdf", pdf, "application/pdf")},
@@ -97,6 +105,7 @@ def test_upload_pdf_success(client):
     assert data["filename"] == "test.pdf"
     assert data["document_id"] >= 1
     assert "2 chunks" in data["message"]
+    assert "without embeddings" in data["message"]
 
 
 def test_upload_rejects_non_pdf(client):
@@ -115,7 +124,7 @@ def test_upload_handles_extraction_error(client):
     with patch(
         "src.routes.documents._extract_text_from_pdf",
         side_effect=Exception("corrupt pdf"),
-    ):
+    ), _mock_no_embeddings():
         response = client.post(
             "/documents/upload",
             files={"file": ("bad.pdf", pdf, "application/pdf")},
@@ -140,7 +149,7 @@ def test_list_documents_empty(client):
 def test_list_documents_after_upload(client):
     """Should include uploaded document in list."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]):
+    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
         client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -160,7 +169,7 @@ def test_list_documents_after_upload(client):
 def test_get_document_by_id(client):
     """Should return a specific document by ID."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]):
+    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -181,7 +190,7 @@ def test_get_document_not_found(client):
 def test_document_status(client):
     """Should return processing status for a document."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]):
+    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -198,7 +207,7 @@ def test_document_status(client):
 def test_delete_document(client):
     """Should soft-delete a document so it no longer appears in list."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]):
+    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
