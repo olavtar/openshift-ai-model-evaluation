@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -69,4 +70,48 @@ class Chunk(Base):
     element_type = Column(String(50), nullable=False, default="paragraph")
     token_count = Column(Integer, nullable=False, default=0)
     embedding = Column(Vector(EMBEDDING_DIMENSION), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class EvalRun(Base):
+    """A single evaluation run against a model using a set of test questions."""
+
+    __tablename__ = "eval_run"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_name = Column(String(200), nullable=False)
+    status = Column(String(50), nullable=False, default="pending")
+    total_questions = Column(Integer, nullable=False, default=0)
+    completed_questions = Column(Integer, nullable=False, default=0)
+    avg_latency_ms = Column(Float, nullable=True)
+    avg_relevancy = Column(Float, nullable=True)
+    avg_groundedness = Column(Float, nullable=True)
+    avg_context_precision = Column(Float, nullable=True)
+    hallucination_rate = Column(Float, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    completed_at = Column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<EvalRun(id={self.id}, model='{self.model_name}', status='{self.status}')>"
+
+
+class EvalResult(Base):
+    """Result for a single question within an evaluation run."""
+
+    __tablename__ = "eval_result"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    eval_run_id = Column(Integer, ForeignKey("eval_run.id"), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    contexts = Column(Text, nullable=True)
+    latency_ms = Column(Float, nullable=True)
+    relevancy_score = Column(Float, nullable=True)
+    groundedness_score = Column(Float, nullable=True)
+    context_precision_score = Column(Float, nullable=True)
+    is_hallucination = Column(Boolean, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())

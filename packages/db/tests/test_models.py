@@ -90,3 +90,69 @@ def test_chunk_document_id_has_foreign_key():
     fk = list(Chunk.__table__.c.document_id.foreign_keys)
     assert len(fk) == 1
     assert str(fk[0].column) == "document.id"
+
+
+# --- EvalRun model tests ---
+
+
+def test_eval_run_table_name():
+    """EvalRun should map to eval_run table."""
+    from db.models import EvalRun
+
+    assert EvalRun.__tablename__ == "eval_run"
+
+
+def test_eval_run_has_required_columns():
+    """EvalRun should have all expected columns."""
+    from db.models import EvalRun
+
+    columns = {c.name for c in EvalRun.__table__.columns}
+    expected = {
+        "id", "model_name", "status", "total_questions", "completed_questions",
+        "avg_latency_ms", "avg_relevancy", "avg_groundedness",
+        "avg_context_precision", "hallucination_rate", "total_tokens",
+        "error_message", "created_at", "completed_at",
+    }
+    assert expected == columns
+
+
+def test_eval_run_repr():
+    """EvalRun repr should show key fields."""
+    from db.models import EvalRun
+
+    r = EvalRun(id=1, model_name="granite", status="completed")
+    assert "granite" in repr(r)
+    assert "completed" in repr(r)
+
+
+# --- EvalResult model tests ---
+
+
+def test_eval_result_table_name():
+    """EvalResult should map to eval_result table."""
+    from db.models import EvalResult
+
+    assert EvalResult.__tablename__ == "eval_result"
+
+
+def test_eval_result_has_required_columns():
+    """EvalResult should have all expected columns."""
+    from db.models import EvalResult
+
+    columns = {c.name for c in EvalResult.__table__.columns}
+    expected = {
+        "id", "eval_run_id", "question", "answer", "contexts",
+        "latency_ms", "relevancy_score", "groundedness_score",
+        "context_precision_score", "is_hallucination", "total_tokens",
+        "error_message", "created_at",
+    }
+    assert expected == columns
+
+
+def test_eval_result_has_foreign_key():
+    """EvalResult.eval_run_id should reference eval_run.id."""
+    from db.models import EvalResult
+
+    fk = list(EvalResult.__table__.c.eval_run_id.foreign_keys)
+    assert len(fk) == 1
+    assert str(fk[0].column) == "eval_run.id"
