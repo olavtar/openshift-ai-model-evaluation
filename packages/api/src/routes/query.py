@@ -15,6 +15,8 @@ from ..services.retrieval import retrieve_chunks
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+CONFIDENCE_THRESHOLD = 0.5
+
 
 @router.post("/", response_model=QueryResponse)
 async def query(
@@ -54,9 +56,14 @@ async def query(
     if result.get("usage"):
         usage = UsageInfo(**result["usage"])
 
+    low_confidence = (
+        len(sources) > 0 and all(s.score < CONFIDENCE_THRESHOLD for s in sources)
+    )
+
     return QueryResponse(
         answer=result["answer"],
         model=result["model"],
         sources=sources,
         usage=usage,
+        low_confidence=low_confidence,
     )
