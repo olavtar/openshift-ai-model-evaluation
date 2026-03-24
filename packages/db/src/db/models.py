@@ -2,6 +2,7 @@
 
 """Database models for model evaluation."""
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Column,
@@ -14,6 +15,8 @@ from sqlalchemy import (
 )
 
 from .database import Base
+
+EMBEDDING_DIMENSION = 768
 
 
 class ModelConfig(Base):
@@ -65,4 +68,5 @@ class Chunk(Base):
     section_path = Column(Text, nullable=True)
     element_type = Column(String(50), nullable=False, default="paragraph")
     token_count = Column(Integer, nullable=False, default=0)
+    embedding = Column(Vector(EMBEDDING_DIMENSION), nullable=True)
     created_at = Column(DateTime, server_default=func.now())

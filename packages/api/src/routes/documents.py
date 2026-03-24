@@ -16,6 +16,8 @@ from ..schemas.documents import (
     DocumentStatusResponse,
     DocumentUploadResponse,
 )
+from ..services.chunking import chunk_text
+from ..services.embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,29 +80,45 @@ async def upload_document(
             message=doc.error_message,
         )
 
-    chunks = []
+    # Split page text into smaller overlapping chunks
+    all_chunks = []
     for page in pages:
-        chunk = Chunk(
-            document_id=doc.id,
+        page_chunks = chunk_text(
             text=page["text"],
             source_document=file.filename,
             page_number=str(page["page_number"]),
-            element_type="page",
-            token_count=len(page["text"].split()),
         )
-        chunks.append(chunk)
+        all_chunks.extend(page_chunks)
 
-    session.add_all(chunks)
+    # Generate embeddings (returns None if unavailable)
+    chunk_texts = [c["text"] for c in all_chunks]
+    embeddings = await generate_embeddings(chunk_texts)
+
+    db_chunks = []
+    for i, chunk_data in enumerate(all_chunks):
+        chunk = Chunk(
+            document_id=doc.id,
+            text=chunk_data["text"],
+            source_document=chunk_data["source_document"],
+            page_number=chunk_data["page_number"],
+            element_type="chunk",
+            token_count=chunk_data["token_count"],
+            embedding=embeddings[i] if embeddings else None,
+        )
+        db_chunks.append(chunk)
+
+    session.add_all(db_chunks)
     doc.status = "ready"
-    doc.chunk_count = len(chunks)
+    doc.chunk_count = len(db_chunks)
     doc.page_count = len(pages)
     await session.commit()
 
+    embed_status = "with embeddings" if embeddings else "without embeddings"
     return DocumentUploadResponse(
         document_id=doc.id,
         filename=doc.filename,
         status="ready",
-        message=f"Extracted {len(chunks)} chunks from {len(pages)} pages",
+        message=f"Extracted {len(db_chunks)} chunks from {len(pages)} pages ({embed_status})",
     )
 
 
