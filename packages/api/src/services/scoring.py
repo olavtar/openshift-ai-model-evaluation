@@ -2,8 +2,9 @@
 """DeepEval-based scoring for evaluation results.
 
 Uses LLM-as-judge via DeepEval metrics to score RAG responses on
-faithfulness (groundedness), answer relevancy, and contextual precision.
-The judge model is configurable — defaults to MaaS endpoint.
+faithfulness (groundedness), answer relevancy, contextual precision,
+and contextual relevancy. The judge model is configurable — defaults
+to MaaS endpoint.
 """
 
 import logging
@@ -11,6 +12,7 @@ import logging
 from deepeval.metrics import (
     AnswerRelevancyMetric,
     ContextualPrecisionMetric,
+    ContextualRelevancyMetric,
     FaithfulnessMetric,
 )
 from deepeval.models import DeepEvalBaseLLM
@@ -85,7 +87,8 @@ async def score_result(
 
     Returns:
         Dict with relevancy_score, groundedness_score,
-        context_precision_score, and is_hallucination.
+        context_precision_score, context_relevancy_score,
+        and is_hallucination.
     """
     if not settings.MODEL_API_TOKEN:
         logger.warning("No MODEL_API_TOKEN set, skipping scoring")
@@ -107,6 +110,10 @@ async def score_result(
         (
             "context_precision_score",
             ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=False),
+        ),
+        (
+            "context_relevancy_score",
+            ContextualRelevancyMetric(model=judge, threshold=0.5, async_mode=False),
         ),
     ]
 

@@ -110,7 +110,7 @@ def test_eval_run_has_required_columns():
     expected = {
         "id", "model_name", "status", "total_questions", "completed_questions",
         "avg_latency_ms", "avg_relevancy", "avg_groundedness",
-        "avg_context_precision", "hallucination_rate", "total_tokens",
+        "avg_context_precision", "avg_context_relevancy", "hallucination_rate", "total_tokens",
         "error_message", "created_at", "completed_at",
     }
     assert expected == columns
@@ -143,7 +143,7 @@ def test_eval_result_has_required_columns():
     expected = {
         "id", "eval_run_id", "question", "answer", "contexts",
         "latency_ms", "relevancy_score", "groundedness_score",
-        "context_precision_score", "is_hallucination", "total_tokens",
+        "context_precision_score", "context_relevancy_score", "is_hallucination", "total_tokens",
         "error_message", "created_at",
     }
     assert expected == columns

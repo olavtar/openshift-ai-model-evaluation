@@ -48,7 +48,8 @@ async def test_score_result_returns_all_metrics(_mock_settings):
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=mock_metric):
+         patch("src.services.scoring.ContextualPrecisionMetric", return_value=mock_metric), \
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -58,6 +59,7 @@ async def test_score_result_returns_all_metrics(_mock_settings):
     assert result["groundedness_score"] == 0.85
     assert result["relevancy_score"] == 0.85
     assert result["context_precision_score"] == 0.85
+    assert result["context_relevancy_score"] == 0.85
     assert result["is_hallucination"] is False
 
 
@@ -76,7 +78,8 @@ async def test_score_result_detects_hallucination(_mock_settings):
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=low_score_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=high_score_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=high_score_metric):
+         patch("src.services.scoring.ContextualPrecisionMetric", return_value=high_score_metric), \
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=high_score_metric):
         result = await score_result(
             question="What is the capital requirement?",
             answer="Banks need 50% capital reserves.",
@@ -101,7 +104,8 @@ async def test_score_result_handles_metric_failure(_mock_settings):
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=failing_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=ok_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=ok_metric):
+         patch("src.services.scoring.ContextualPrecisionMetric", return_value=ok_metric), \
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=ok_metric):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -111,6 +115,7 @@ async def test_score_result_handles_metric_failure(_mock_settings):
     assert result["groundedness_score"] is None
     assert result["relevancy_score"] == 0.9
     assert result["context_precision_score"] == 0.9
+    assert result["context_relevancy_score"] == 0.9
     assert result["is_hallucination"] is None
 
 

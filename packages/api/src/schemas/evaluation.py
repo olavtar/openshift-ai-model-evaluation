@@ -22,6 +22,7 @@ class EvalResultResponse(BaseModel):
     relevancy_score: float | None = None
     groundedness_score: float | None = None
     context_precision_score: float | None = None
+    context_relevancy_score: float | None = None
     is_hallucination: bool | None = None
     total_tokens: int | None = None
     error_message: str | None = None
@@ -39,6 +40,7 @@ class EvalRunResponse(BaseModel):
     avg_relevancy: float | None = None
     avg_groundedness: float | None = None
     avg_context_precision: float | None = None
+    avg_context_relevancy: float | None = None
     hallucination_rate: float | None = None
     total_tokens: int | None = None
     error_message: str | None = None

@@ -29,8 +29,9 @@ router = APIRouter()
 async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str]) -> None:
     """Execute an evaluation run in the background.
 
-    For each question: retrieve context, generate answer, score with
-    DeepEval metrics (faithfulness, relevancy, context precision), record results.
+    For each question: retrieve context, generate answer, score with DeepEval
+    metrics (faithfulness, relevancy, context precision, context relevancy),
+    record results.
     """
     from db.database import SessionLocal
 
@@ -48,6 +49,7 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
         all_relevancy = []
         all_groundedness = []
         all_context_precision = []
+        all_context_relevancy = []
         hallucination_count = 0
 
         for question in questions:
@@ -82,6 +84,7 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                     relevancy_score=scores.get("relevancy_score"),
                     groundedness_score=scores.get("groundedness_score"),
                     context_precision_score=scores.get("context_precision_score"),
+                    context_relevancy_score=scores.get("context_relevancy_score"),
                     is_hallucination=scores.get("is_hallucination"),
                     total_tokens=tokens,
                 )
@@ -96,6 +99,8 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                     all_groundedness.append(scores["groundedness_score"])
                 if scores.get("context_precision_score") is not None:
                     all_context_precision.append(scores["context_precision_score"])
+                if scores.get("context_relevancy_score") is not None:
+                    all_context_relevancy.append(scores["context_relevancy_score"])
                 if scores.get("is_hallucination"):
                     hallucination_count += 1
                 completed += 1
@@ -124,6 +129,11 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
         run.avg_context_precision = (
             sum(all_context_precision) / len(all_context_precision)
             if all_context_precision
+            else None
+        )
+        run.avg_context_relevancy = (
+            sum(all_context_relevancy) / len(all_context_relevancy)
+            if all_context_relevancy
             else None
         )
         run.hallucination_rate = (
@@ -189,6 +199,7 @@ async def list_eval_runs(
             avg_relevancy=r.avg_relevancy,
             avg_groundedness=r.avg_groundedness,
             avg_context_precision=r.avg_context_precision,
+            avg_context_relevancy=r.avg_context_relevancy,
             hallucination_rate=r.hallucination_rate,
             total_tokens=r.total_tokens,
             error_message=r.error_message,
@@ -241,6 +252,7 @@ async def get_eval_run(
                 relevancy_score=r.relevancy_score,
                 groundedness_score=r.groundedness_score,
                 context_precision_score=r.context_precision_score,
+                context_relevancy_score=r.context_relevancy_score,
                 is_hallucination=r.is_hallucination,
                 total_tokens=r.total_tokens,
                 error_message=r.error_message,
