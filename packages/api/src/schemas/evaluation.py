@@ -64,3 +64,35 @@ class EvalRunCreateResponse(BaseModel):
     status: str
     total_questions: int
     message: str
+
+
+class EvalRunRerun(BaseModel):
+    """Request to re-run an evaluation with a different model."""
+
+    model_name: str = Field(..., min_length=1)
+
+
+class ComparisonMetric(BaseModel):
+    """A single metric compared across two runs."""
+
+    metric: str
+    run_a: float | None = None
+    run_b: float | None = None
+    winner: str | None = None
+
+
+class QuestionComparison(BaseModel):
+    """Side-by-side comparison of a single question across two runs."""
+
+    question: str
+    run_a: EvalResultResponse | None = None
+    run_b: EvalResultResponse | None = None
+
+
+class ComparisonResponse(BaseModel):
+    """Side-by-side comparison of two evaluation runs."""
+
+    run_a: EvalRunResponse
+    run_b: EvalRunResponse
+    metrics: list[ComparisonMetric] = []
+    questions: list[QuestionComparison] = []
