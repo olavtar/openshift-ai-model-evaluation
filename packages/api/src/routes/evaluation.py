@@ -12,11 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db import EvalResult, EvalRun, get_db
 
 from ..schemas.evaluation import (
+    ComparisonMetric,
+    ComparisonResponse,
     EvalResultResponse,
     EvalRunCreate,
     EvalRunCreateResponse,
     EvalRunDetailResponse,
+    EvalRunRerun,
     EvalRunResponse,
+    QuestionComparison,
 )
 from ..services.generation import generate_answer
 from ..services.retrieval import retrieve_chunks
@@ -210,6 +214,118 @@ async def list_eval_runs(
     ]
 
 
+def _build_run_response(run: EvalRun) -> EvalRunResponse:
+    """Build an EvalRunResponse from a model instance."""
+    return EvalRunResponse(
+        id=run.id,
+        model_name=run.model_name,
+        status=run.status,
+        total_questions=run.total_questions,
+        completed_questions=run.completed_questions,
+        avg_latency_ms=run.avg_latency_ms,
+        avg_relevancy=run.avg_relevancy,
+        avg_groundedness=run.avg_groundedness,
+        avg_context_precision=run.avg_context_precision,
+        avg_context_relevancy=run.avg_context_relevancy,
+        hallucination_rate=run.hallucination_rate,
+        total_tokens=run.total_tokens,
+        error_message=run.error_message,
+        created_at=run.created_at.isoformat() if run.created_at else None,
+        completed_at=run.completed_at.isoformat() if run.completed_at else None,
+    )
+
+
+def _build_result_response(r: EvalResult) -> EvalResultResponse:
+    """Build an EvalResultResponse from a model instance."""
+    return EvalResultResponse(
+        id=r.id,
+        question=r.question,
+        answer=r.answer,
+        contexts=r.contexts,
+        latency_ms=r.latency_ms,
+        relevancy_score=r.relevancy_score,
+        groundedness_score=r.groundedness_score,
+        context_precision_score=r.context_precision_score,
+        context_relevancy_score=r.context_relevancy_score,
+        is_hallucination=r.is_hallucination,
+        total_tokens=r.total_tokens,
+        error_message=r.error_message,
+    )
+
+
+def _compare_metric(name: str, val_a: float | None, val_b: float | None) -> ComparisonMetric:
+    """Compare a single metric between two runs."""
+    winner = None
+    if val_a is not None and val_b is not None:
+        if abs(val_a - val_b) < 0.05:
+            winner = "tie"
+        elif val_a > val_b:
+            winner = "run_a"
+        else:
+            winner = "run_b"
+    return ComparisonMetric(metric=name, run_a=val_a, run_b=val_b, winner=winner)
+
+
+@router.get("/compare", response_model=ComparisonResponse)
+async def compare_eval_runs(
+    run_a_id: int,
+    run_b_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> ComparisonResponse:
+    """Compare two evaluation runs side-by-side.
+
+    Returns aggregate metric comparison and per-question breakdown.
+    Questions are matched by text across both runs.
+    """
+    run_a = await session.get(EvalRun, run_a_id)
+    run_b = await session.get(EvalRun, run_b_id)
+    if not run_a:
+        raise HTTPException(status_code=404, detail=f"Evaluation run {run_a_id} not found")
+    if not run_b:
+        raise HTTPException(status_code=404, detail=f"Evaluation run {run_b_id} not found")
+
+    metrics = [
+        _compare_metric("groundedness", run_a.avg_groundedness, run_b.avg_groundedness),
+        _compare_metric("relevancy", run_a.avg_relevancy, run_b.avg_relevancy),
+        _compare_metric(
+            "context_precision", run_a.avg_context_precision, run_b.avg_context_precision
+        ),
+        _compare_metric(
+            "context_relevancy", run_a.avg_context_relevancy, run_b.avg_context_relevancy
+        ),
+        _compare_metric("hallucination_rate", run_a.hallucination_rate, run_b.hallucination_rate),
+        _compare_metric("latency_ms", run_a.avg_latency_ms, run_b.avg_latency_ms),
+    ]
+
+    results_a = await session.execute(
+        select(EvalResult).where(EvalResult.eval_run_id == run_a_id).order_by(EvalResult.id)
+    )
+    results_b = await session.execute(
+        select(EvalResult).where(EvalResult.eval_run_id == run_b_id).order_by(EvalResult.id)
+    )
+
+    a_by_question = {r.question: r for r in results_a.scalars().all()}
+    b_by_question = {r.question: r for r in results_b.scalars().all()}
+
+    all_questions = list(dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys())))
+
+    questions = [
+        QuestionComparison(
+            question=q,
+            run_a=_build_result_response(a_by_question[q]) if q in a_by_question else None,
+            run_b=_build_result_response(b_by_question[q]) if q in b_by_question else None,
+        )
+        for q in all_questions
+    ]
+
+    return ComparisonResponse(
+        run_a=_build_run_response(run_a),
+        run_b=_build_run_response(run_b),
+        metrics=metrics,
+        questions=questions,
+    )
+
+
 @router.get("/{eval_run_id}", response_model=EvalRunDetailResponse)
 async def get_eval_run(
     eval_run_id: int,
@@ -237,6 +353,7 @@ async def get_eval_run(
         avg_relevancy=run.avg_relevancy,
         avg_groundedness=run.avg_groundedness,
         avg_context_precision=run.avg_context_precision,
+        avg_context_relevancy=run.avg_context_relevancy,
         hallucination_rate=run.hallucination_rate,
         total_tokens=run.total_tokens,
         error_message=run.error_message,
@@ -259,4 +376,58 @@ async def get_eval_run(
             )
             for r in result_rows
         ],
+    )
+
+
+@router.post("/{eval_run_id}/rerun", response_model=EvalRunCreateResponse, status_code=201)
+async def rerun_eval(
+    eval_run_id: int,
+    request: EvalRunRerun,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+) -> EvalRunCreateResponse:
+    """Re-run an evaluation with a different model.
+
+    Copies the questions from an existing run and creates a new run
+    using the specified model. Useful for comparing a new model against
+    previously evaluated results without re-entering questions.
+    """
+    original_run = await session.get(EvalRun, eval_run_id)
+    if not original_run:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+
+    results = await session.execute(
+        select(EvalResult.question)
+        .where(EvalResult.eval_run_id == eval_run_id)
+        .order_by(EvalResult.id)
+    )
+    questions = [row[0] for row in results.all()]
+    if not questions:
+        raise HTTPException(
+            status_code=400, detail="Original run has no questions to re-run"
+        )
+
+    run = EvalRun(
+        model_name=request.model_name,
+        status="pending",
+        total_questions=len(questions),
+    )
+    session.add(run)
+    await session.flush()
+
+    background_tasks.add_task(
+        _run_evaluation,
+        eval_run_id=run.id,
+        model_name=request.model_name,
+        questions=questions,
+    )
+
+    await session.commit()
+
+    return EvalRunCreateResponse(
+        eval_run_id=run.id,
+        model_name=run.model_name,
+        status=run.status,
+        total_questions=run.total_questions,
+        message=f"Re-run started with {len(questions)} questions from run #{eval_run_id}",
     )
