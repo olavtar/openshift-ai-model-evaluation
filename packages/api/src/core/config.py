@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # Embedding model
     EMBEDDING_MODEL: str = "nomic-embed-text-v1.5"
 
+    # Judge model for evaluation scoring (uses MaaS endpoint)
+    JUDGE_MODEL_NAME: str = "granite-3.1-8b-instruct"
+
     model_config = {"env_file": ".env"}
 
 

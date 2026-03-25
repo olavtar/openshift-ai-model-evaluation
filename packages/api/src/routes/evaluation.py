@@ -20,6 +20,7 @@ from ..schemas.evaluation import (
 )
 from ..services.generation import generate_answer
 from ..services.retrieval import retrieve_chunks
+from ..services.scoring import score_result
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -28,8 +29,8 @@ router = APIRouter()
 async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str]) -> None:
     """Execute an evaluation run in the background.
 
-    For each question: retrieve context, generate answer, record results.
-    Metric scoring (groundedness, relevancy, etc.) is deferred to PR 9.
+    For each question: retrieve context, generate answer, score with
+    DeepEval metrics (faithfulness, relevancy, context precision), record results.
     """
     from db.database import SessionLocal
 
@@ -44,6 +45,10 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
         total_latency = 0.0
         total_tokens_sum = 0
         completed = 0
+        all_relevancy = []
+        all_groundedness = []
+        all_context_precision = []
+        hallucination_count = 0
 
         for question in questions:
             start = time.time()
@@ -57,7 +62,16 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                 latency = (time.time() - start) * 1000
                 tokens = result.get("usage", {}).get("total_tokens") if result.get("usage") else None
 
-                contexts_str = "\n---\n".join(c["text"] for c in chunks) if chunks else None
+                context_texts = [c["text"] for c in chunks] if chunks else []
+                contexts_str = "\n---\n".join(context_texts) if context_texts else None
+
+                scores = {}
+                if result["answer"] and context_texts:
+                    scores = await score_result(
+                        question=question,
+                        answer=result["answer"],
+                        contexts=context_texts,
+                    )
 
                 eval_result = EvalResult(
                     eval_run_id=eval_run_id,
@@ -65,6 +79,10 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                     answer=result["answer"],
                     contexts=contexts_str,
                     latency_ms=latency,
+                    relevancy_score=scores.get("relevancy_score"),
+                    groundedness_score=scores.get("groundedness_score"),
+                    context_precision_score=scores.get("context_precision_score"),
+                    is_hallucination=scores.get("is_hallucination"),
                     total_tokens=tokens,
                 )
                 session.add(eval_result)
@@ -72,6 +90,14 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                 total_latency += latency
                 if tokens:
                     total_tokens_sum += tokens
+                if scores.get("relevancy_score") is not None:
+                    all_relevancy.append(scores["relevancy_score"])
+                if scores.get("groundedness_score") is not None:
+                    all_groundedness.append(scores["groundedness_score"])
+                if scores.get("context_precision_score") is not None:
+                    all_context_precision.append(scores["context_precision_score"])
+                if scores.get("is_hallucination"):
+                    hallucination_count += 1
                 completed += 1
 
             except Exception as e:
@@ -91,6 +117,18 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
         run.completed_at = datetime.now(timezone.utc)
         run.avg_latency_ms = total_latency / len(questions) if questions else None
         run.total_tokens = total_tokens_sum or None
+        run.avg_relevancy = sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
+        run.avg_groundedness = (
+            sum(all_groundedness) / len(all_groundedness) if all_groundedness else None
+        )
+        run.avg_context_precision = (
+            sum(all_context_precision) / len(all_context_precision)
+            if all_context_precision
+            else None
+        )
+        run.hallucination_rate = (
+            hallucination_count / completed if completed > 0 else None
+        )
         await session.commit()
 
 
