@@ -24,8 +24,8 @@ dependencies = [
     "pypdf>=4.0.0",
     "python-multipart>=0.0.9",
     "httpx>=0.25.0",
-
     "ai-quickstart-template-db",
+    "deepeval>=3.9.2",
 ]
 
 [project.optional-dependencies]
