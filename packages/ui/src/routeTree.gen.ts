@@ -10,33 +10,68 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as EvaluationsIndexRouteImport } from './routes/evaluations/index'
+import { Route as EvaluationsCompareRouteImport } from './routes/evaluations/compare'
+import { Route as EvaluationsIdRouteImport } from './routes/evaluations/$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EvaluationsIndexRoute = EvaluationsIndexRouteImport.update({
+  id: '/evaluations/',
+  path: '/evaluations/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvaluationsCompareRoute = EvaluationsCompareRouteImport.update({
+  id: '/evaluations/compare',
+  path: '/evaluations/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvaluationsIdRoute = EvaluationsIdRouteImport.update({
+  id: '/evaluations/$id',
+  path: '/evaluations/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/evaluations/$id': typeof EvaluationsIdRoute
+  '/evaluations/compare': typeof EvaluationsCompareRoute
+  '/evaluations/': typeof EvaluationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/evaluations/$id': typeof EvaluationsIdRoute
+  '/evaluations/compare': typeof EvaluationsCompareRoute
+  '/evaluations': typeof EvaluationsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/evaluations/$id': typeof EvaluationsIdRoute
+  '/evaluations/compare': typeof EvaluationsCompareRoute
+  '/evaluations/': typeof EvaluationsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/evaluations/$id' | '/evaluations/compare' | '/evaluations/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/evaluations/$id' | '/evaluations/compare' | '/evaluations'
+  id:
+    | '__root__'
+    | '/'
+    | '/evaluations/$id'
+    | '/evaluations/compare'
+    | '/evaluations/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  EvaluationsIdRoute: typeof EvaluationsIdRoute
+  EvaluationsCompareRoute: typeof EvaluationsCompareRoute
+  EvaluationsIndexRoute: typeof EvaluationsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +83,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/evaluations/': {
+      id: '/evaluations/'
+      path: '/evaluations'
+      fullPath: '/evaluations/'
+      preLoaderRoute: typeof EvaluationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/evaluations/compare': {
+      id: '/evaluations/compare'
+      path: '/evaluations/compare'
+      fullPath: '/evaluations/compare'
+      preLoaderRoute: typeof EvaluationsCompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/evaluations/$id': {
+      id: '/evaluations/$id'
+      path: '/evaluations/$id'
+      fullPath: '/evaluations/$id'
+      preLoaderRoute: typeof EvaluationsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  EvaluationsIdRoute: EvaluationsIdRoute,
+  EvaluationsCompareRoute: EvaluationsCompareRoute,
+  EvaluationsIndexRoute: EvaluationsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

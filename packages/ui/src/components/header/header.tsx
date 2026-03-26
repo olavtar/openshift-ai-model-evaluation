@@ -10,9 +10,15 @@ export function Header() {
           <Logo />
           <span className="font-bold">ai-quickstart-template</span>
         </Link>
-        <div className="flex items-center gap-4">
+        <nav className="flex items-center gap-6">
+          <Link to="/" className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+            Dashboard
+          </Link>
+          <Link to="/evaluations" className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+            Evaluations
+          </Link>
           <ModeToggle />
-        </div>
+        </nav>
       </div>
     </header>
   );
