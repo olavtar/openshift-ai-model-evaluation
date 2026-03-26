@@ -1,6 +1,6 @@
 services:
   ai-quickstart-template-db:
-    image: docker.io/postgres:16
+    image: docker.io/pgvector/pgvector:pg16
     labels:
       com.quickstart.package: db
     environment:

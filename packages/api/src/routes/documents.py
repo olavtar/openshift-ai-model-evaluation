@@ -189,7 +189,7 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     if doc.deleted_at is None:
-        doc.deleted_at = datetime.now(UTC)
+        doc.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await session.commit()
 
 

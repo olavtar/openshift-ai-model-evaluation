@@ -132,7 +132,7 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                 await session.commit()
 
             run.status = "completed"
-            run.completed_at = datetime.now(UTC)
+            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
             run.avg_latency_ms = total_latency / len(questions) if questions else None
             run.total_tokens = total_tokens_sum or None
             run.avg_relevancy = sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
