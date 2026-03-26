@@ -21,10 +21,14 @@ from ..schemas.evaluation import (
     EvalRunRerun,
     EvalRunResponse,
     QuestionComparison,
+    SynthesizeRequest,
+    SynthesizeResponse,
+    SynthesizedQuestion,
 )
 from ..services.generation import generate_answer
 from ..services.retrieval import retrieve_chunks
 from ..services.scoring import score_result
+from ..services.synthesizer import generate_questions
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,6 +216,33 @@ async def list_eval_runs(
         )
         for r in runs
     ]
+
+
+@router.post("/synthesize", response_model=SynthesizeResponse)
+async def synthesize_questions(
+    request: SynthesizeRequest,
+    session: AsyncSession = Depends(get_db),
+) -> SynthesizeResponse:
+    """Auto-generate evaluation questions from ingested documents.
+
+    Uses DeepEval's Synthesizer to create question/expected-answer pairs
+    from document chunks. Optionally filter by specific document IDs.
+    """
+    questions = await generate_questions(
+        session=session,
+        document_ids=request.document_ids,
+        max_questions=request.max_questions,
+    )
+    return SynthesizeResponse(
+        questions=[
+            SynthesizedQuestion(
+                question=q["question"],
+                expected_answer=q.get("expected_answer"),
+            )
+            for q in questions
+        ],
+        count=len(questions),
+    )
 
 
 def _build_run_response(run: EvalRun) -> EvalRunResponse:

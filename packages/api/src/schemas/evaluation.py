@@ -96,3 +96,26 @@ class ComparisonResponse(BaseModel):
     run_b: EvalRunResponse
     metrics: list[ComparisonMetric] = []
     questions: list[QuestionComparison] = []
+
+
+class SynthesizeRequest(BaseModel):
+    """Request to auto-generate evaluation questions from documents."""
+
+    document_ids: list[int] | None = Field(
+        default=None, description="Document IDs to generate from. None = all documents."
+    )
+    max_questions: int = Field(default=10, ge=1, le=50)
+
+
+class SynthesizedQuestion(BaseModel):
+    """A single auto-generated question with expected answer."""
+
+    question: str
+    expected_answer: str | None = None
+
+
+class SynthesizeResponse(BaseModel):
+    """Response with auto-generated evaluation questions."""
+
+    questions: list[SynthesizedQuestion] = []
+    count: int = 0
