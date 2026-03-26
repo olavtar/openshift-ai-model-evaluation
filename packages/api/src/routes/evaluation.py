@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import settings
 from ..schemas.evaluation import (
     ComparisonMetric,
     ComparisonResponse,
@@ -228,11 +229,21 @@ async def synthesize_questions(
     Uses DeepEval's Synthesizer to create question/expected-answer pairs
     from document chunks. Optionally filter by specific document IDs.
     """
-    questions = await generate_questions(
-        session=session,
-        document_ids=request.document_ids,
-        max_questions=request.max_questions,
-    )
+    if not settings.MODEL_API_TOKEN:
+        raise HTTPException(
+            status_code=400,
+            detail="MODEL_API_TOKEN is not configured. Set it to enable question generation.",
+        )
+
+    try:
+        questions = await generate_questions(
+            session=session,
+            document_ids=request.document_ids,
+            max_questions=request.max_questions,
+        )
+    except Exception as e:
+        logger.exception("Question synthesis failed")
+        raise HTTPException(status_code=500, detail=f"Question synthesis failed: {str(e)[:200]}")
     return SynthesizeResponse(
         questions=[
             SynthesizedQuestion(
