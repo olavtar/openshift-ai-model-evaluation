@@ -83,6 +83,7 @@ def test_returns_error_on_api_failure():
     settings.MODEL_API_TOKEN = "test-token"
 
     import asyncio
+
     import httpx
 
     mock_response = MagicMock()

@@ -7,17 +7,12 @@ import { Monitor, Server, Database } from 'lucide-react';
 import { ServiceList } from '../components/service-list/service-list';
 import { ModelComparison } from '../components/model-comparison/model-comparison';
 import { QueryPanel } from '../components/query-panel/query-panel';
+import { HEALTH_STATUS_COLORS } from '../lib/status-colors';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const Route = createFileRoute('/' as any)({
     component: Index,
 });
-
-const STATUS_BADGE: Record<string, { label: string; classes: string }> = {
-    healthy: { label: 'Healthy', classes: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300' },
-    unhealthy: { label: 'Unhealthy', classes: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
-    unknown: { label: 'Unknown', classes: 'bg-slate-100 text-slate-700 dark:bg-slate-900/60 dark:text-slate-300' },
-};
 
 function Index() {
     const { data: readiness, isLoading, error } = useHealth();
@@ -65,7 +60,7 @@ function Index() {
                         <div className="grid gap-3 sm:grid-cols-3">
                             {deps.map(({ key, label, icon }) => {
                                 const st = depStatus(key);
-                                const badge = STATUS_BADGE[st] ?? STATUS_BADGE.unknown;
+                                const badge = HEALTH_STATUS_COLORS[st] ?? HEALTH_STATUS_COLORS.unknown;
                                 return (
                                     <div key={key} className="flex items-center gap-3 rounded-lg border p-3">
                                         <div className="grid h-8 w-8 place-items-center rounded bg-muted">{icon}</div>

@@ -38,13 +38,15 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         self._model_name = model_name
         self._base_url = base_url
         self._api_key = api_key
+        self._sync_client = OpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
+        self._async_client = AsyncOpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
         super().__init__(model=model_name)
 
     def load_model(self):
-        return OpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
+        return self._sync_client
 
     def generate(self, prompt: str, schema=None) -> str:
-        response = self.model.chat.completions.create(
+        response = self._sync_client.chat.completions.create(
             model=self._model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
@@ -52,8 +54,7 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         return response.choices[0].message.content
 
     async def a_generate(self, prompt: str, schema=None) -> str:
-        client = AsyncOpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
-        response = await client.chat.completions.create(
+        response = await self._async_client.chat.completions.create(
             model=self._model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
@@ -105,21 +106,21 @@ async def score_result(
     scores: dict = {}
 
     metrics = [
-        ("groundedness_score", FaithfulnessMetric(model=judge, threshold=0.5, async_mode=False)),
-        ("relevancy_score", AnswerRelevancyMetric(model=judge, threshold=0.5, async_mode=False)),
+        ("groundedness_score", FaithfulnessMetric(model=judge, threshold=0.5, async_mode=True)),
+        ("relevancy_score", AnswerRelevancyMetric(model=judge, threshold=0.5, async_mode=True)),
         (
             "context_precision_score",
-            ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=False),
+            ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=True),
         ),
         (
             "context_relevancy_score",
-            ContextualRelevancyMetric(model=judge, threshold=0.5, async_mode=False),
+            ContextualRelevancyMetric(model=judge, threshold=0.5, async_mode=True),
         ),
     ]
 
     for name, metric in metrics:
         try:
-            metric.measure(test_case)
+            await metric.a_measure(test_case)
             scores[name] = metric.score
         except Exception as e:
             logger.error("Scoring failed for %s: %s", name, e)

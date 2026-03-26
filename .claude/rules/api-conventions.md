@@ -9,7 +9,7 @@ paths:
 
 - URLs represent resources (nouns), not actions (verbs): `/users`, not `/getUsers`
 - Use kebab-case for URL paths: `/user-profiles`, not `/userProfiles`
-- Use camelCase for JSON field names: `firstName`, not `first_name`
+- Use snake_case for JSON field names: `first_name`, not `firstName` (Python-first API; Pydantic default)
 - Use plural nouns for collections: `/users`, `/orders`
 - Nest sub-resources under parents: `/users/:id/orders`
 - Keep URLs shallow — max 2 levels of nesting before introducing a top-level resource
@@ -63,12 +63,15 @@ Consistent top-level structure for all responses:
 // Collection
 { "data": [...], "pagination": { ... } }
 
-// Error (RFC 7807 — see error-handling rule)
-{ "type": "...", "title": "...", "status": 422, "detail": "..." }
+// Error (FastAPI default format; RFC 7807 deferred to future phase)
+{ "detail": "Validation error message" }
 ```
 
 ## Versioning
 
+API versioning (`/v1` prefix) is deferred to a future phase. Current endpoints use unversioned paths.
+
+When versioning is adopted:
 - Use URL path versioning for major versions: `/v1/users`, `/v2/users`
 - Use additive, non-breaking changes within a version (new fields, new endpoints)
 - Breaking changes require a new major version

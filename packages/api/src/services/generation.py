@@ -89,9 +89,7 @@ async def generate_answer(
         }
 
     except httpx.HTTPStatusError as e:
-        logger.error(
-            "Generation API returned %s: %s", e.response.status_code, e.response.text[:200]
-        )
+        logger.error("Generation API returned status %s", e.response.status_code)
         return {
             "answer": f"Model {model_name} returned an error: {e.response.status_code}",
             "model": model_name,

@@ -12,13 +12,6 @@ class LivenessResponse(BaseModel):
     timestamp: str
 
 
-class DependencyStatus(BaseModel):
-    """Health status for a single dependency."""
-
-    status: str
-    message: str | None = None
-
-
 class ReadinessResponse(BaseModel):
     """Response for /health/ready -- includes dependency checks.
 

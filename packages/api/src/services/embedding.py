@@ -44,7 +44,7 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]] | None:
         return embeddings
 
     except httpx.HTTPStatusError as e:
-        logger.error("Embedding API returned %s: %s", e.response.status_code, e.response.text[:200])
+        logger.error("Embedding API returned status %s", e.response.status_code)
         return None
     except Exception as e:
         logger.error("Embedding request failed: %s", e)

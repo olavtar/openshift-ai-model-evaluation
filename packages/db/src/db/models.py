@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.orm import relationship
 
 from .database import Base
 
@@ -52,6 +53,8 @@ class Document(Base):
     created_at = Column(DateTime, server_default=func.now())
     deleted_at = Column(DateTime, nullable=True)
 
+    chunks = relationship("Chunk", back_populates="document", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
         return f"<Document(id={self.id}, filename='{self.filename}', status='{self.status}')>"
 
@@ -62,7 +65,7 @@ class Chunk(Base):
     __tablename__ = "chunk"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    document_id = Column(Integer, ForeignKey("document.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("document.id", ondelete="CASCADE"), nullable=False, index=True)
     text = Column(Text, nullable=False)
     source_document = Column(String(500), nullable=False)
     page_number = Column(String(20), nullable=True)
@@ -71,6 +74,8 @@ class Chunk(Base):
     token_count = Column(Integer, nullable=False, default=0)
     embedding = Column(Vector(EMBEDDING_DIMENSION), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+    document = relationship("Document", back_populates="chunks")
 
 
 class EvalRun(Base):
@@ -94,6 +99,8 @@ class EvalRun(Base):
     created_at = Column(DateTime, server_default=func.now())
     completed_at = Column(DateTime, nullable=True)
 
+    results = relationship("EvalResult", back_populates="eval_run", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
         return f"<EvalRun(id={self.id}, model='{self.model_name}', status='{self.status}')>"
 
@@ -104,7 +111,7 @@ class EvalResult(Base):
     __tablename__ = "eval_result"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    eval_run_id = Column(Integer, ForeignKey("eval_run.id"), nullable=False, index=True)
+    eval_run_id = Column(Integer, ForeignKey("eval_run.id", ondelete="CASCADE"), nullable=False, index=True)
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=True)
     contexts = Column(Text, nullable=True)
@@ -117,3 +124,5 @@ class EvalResult(Base):
     total_tokens = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+    eval_run = relationship("EvalRun", back_populates="results")

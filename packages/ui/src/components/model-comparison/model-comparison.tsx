@@ -5,11 +5,7 @@ import { ModelSelector } from '../model-selector/model-selector';
 import { useModelStatus } from '../../hooks/models';
 import { GitCompareArrows } from 'lucide-react';
 import type { Model } from '../../schemas/models';
-
-const STATUS_COLOR: Record<string, string> = {
-    available: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-    unavailable: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
-};
+import { MODEL_STATUS_COLORS } from '../../lib/status-colors';
 
 function ModelStatusBadge({ modelId }: { modelId: number | null }) {
     const { data: status, isLoading } = useModelStatus(modelId ?? 0);
@@ -17,7 +13,7 @@ function ModelStatusBadge({ modelId }: { modelId: number | null }) {
     if (!modelId) return null;
     if (isLoading) return <span className="text-xs text-muted-foreground">Checking...</span>;
 
-    const color = STATUS_COLOR[status?.status ?? ''] ?? STATUS_COLOR.unavailable;
+    const color = MODEL_STATUS_COLORS[status?.status ?? ''] ?? MODEL_STATUS_COLORS.unavailable;
 
     return (
         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${color}`}>

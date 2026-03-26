@@ -8,8 +8,8 @@ describe('Hero', () => {
     expect(screen.getByText(/Welcome to/i)).toBeInTheDocument();
   });
 
-  it('renders the template name', () => {
+  it('renders the page title', () => {
     render(<Hero />);
-    expect(screen.getByText(/AI QuickStart Template/i)).toBeInTheDocument();
+    expect(screen.getByText(/AI Model Evaluation/i)).toBeInTheDocument();
   });
 });

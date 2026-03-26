@@ -15,10 +15,13 @@ router = APIRouter()
 def _build_models() -> list[dict]:
     """Build model list from environment configuration.
 
+    Models are configured via environment variables (MODEL_A_NAME, MODEL_B_NAME).
+    The ModelConfig DB table exists for future extensibility but is not currently used by this endpoint.
     In MaaS mode, models are configured via environment variables (set in
     values.yaml).  This avoids requiring a database connection just to list
     available models, which keeps the QuickStart simple.
     """
+    # IDs are hardcoded for the two-model QuickStart scope. Derive from DB if expanding to N models.
     return [
         {
             "id": 1,

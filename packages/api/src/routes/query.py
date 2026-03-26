@@ -3,11 +3,11 @@
 
 import logging
 
-from fastapi import APIRouter, Depends
+from db import get_db
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import get_db
-
+from ..core.config import settings
 from ..schemas.query import QueryRequest, QueryResponse, SourceChunk, UsageInfo
 from ..services.generation import generate_answer
 from ..services.retrieval import retrieve_chunks
@@ -29,6 +29,14 @@ async def query(
     2. Sends the chunks as context to the specified LLM.
     3. Returns the generated answer with source citations.
     """
+    # Validate model_name
+    valid_models = [settings.MODEL_A_NAME, settings.MODEL_B_NAME]
+    if request.model_name not in valid_models:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid model name. Available: {settings.MODEL_A_NAME}, {settings.MODEL_B_NAME}",
+        )
+
     chunks = await retrieve_chunks(
         query=request.question,
         session=session,

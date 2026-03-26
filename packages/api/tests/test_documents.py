@@ -4,16 +4,6 @@
 import io
 from unittest.mock import patch
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import StaticPool
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
-from db import Base, get_db
-from src.main import app
-
-
 # --- Helpers ---
 
 
@@ -42,45 +32,6 @@ def _mock_no_embeddings():
         "src.routes.documents.generate_embeddings",
         return_value=None,
     )
-
-
-# --- Fixtures ---
-
-
-@pytest.fixture
-def _setup_db():
-    """Create an async in-memory SQLite database for testing."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    import asyncio
-
-    asyncio.run(_create_tables(engine))
-
-    return engine, async_session
-
-
-async def _create_tables(engine):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-@pytest.fixture
-def client(_setup_db):
-    """FastAPI test client with DB dependency overridden."""
-    engine, async_session = _setup_db
-
-    async def _override_get_db():
-        async with async_session() as session:
-            yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-    yield TestClient(app)
-    app.dependency_overrides.clear()
 
 
 # --- Upload tests ---
