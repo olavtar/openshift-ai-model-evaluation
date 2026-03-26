@@ -182,9 +182,15 @@ async def create_eval_run(
     session.add(run)
     await session.flush()
 
+    # Capture values before commit (commit expires ORM attributes in async context)
+    run_id = run.id
+    run_model = run.model_name
+    run_status = run.status
+    run_total = run.total_questions
+
     background_tasks.add_task(
         _run_evaluation,
-        eval_run_id=run.id,
+        eval_run_id=run_id,
         model_name=request.model_name,
         questions=request.questions,
     )
@@ -192,10 +198,10 @@ async def create_eval_run(
     await session.commit()
 
     return EvalRunCreateResponse(
-        eval_run_id=run.id,
-        model_name=run.model_name,
-        status=run.status,
-        total_questions=run.total_questions,
+        eval_run_id=run_id,
+        model_name=run_model,
+        status=run_status,
+        total_questions=run_total,
         message=f"Evaluation started with {len(request.questions)} questions",
     )
 
@@ -427,9 +433,14 @@ async def rerun_eval(
     session.add(run)
     await session.flush()
 
+    run_id = run.id
+    run_model = run.model_name
+    run_status = run.status
+    run_total = run.total_questions
+
     background_tasks.add_task(
         _run_evaluation,
-        eval_run_id=run.id,
+        eval_run_id=run_id,
         model_name=request.model_name,
         questions=questions,
     )
@@ -437,9 +448,9 @@ async def rerun_eval(
     await session.commit()
 
     return EvalRunCreateResponse(
-        eval_run_id=run.id,
-        model_name=run.model_name,
-        status=run.status,
-        total_questions=run.total_questions,
+        eval_run_id=run_id,
+        model_name=run_model,
+        status=run_status,
+        total_questions=run_total,
         message=f"Re-run started with {len(questions)} questions from run #{eval_run_id}",
     )

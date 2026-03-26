@@ -82,12 +82,15 @@ async def upload_document(
         logger.error("Failed to extract text from %s: %s", file.filename, e)
         doc.status = "error"
         doc.error_message = f"PDF extraction failed: {e}"
+        doc_id = doc.id
+        doc_filename = doc.filename
+        error_msg = doc.error_message
         await session.commit()
         return DocumentUploadResponse(
-            document_id=doc.id,
-            filename=doc.filename,
+            document_id=doc_id,
+            filename=doc_filename,
             status="error",
-            message=doc.error_message,
+            message=error_msg,
         )
 
     # Split page text into smaller overlapping chunks
@@ -121,14 +124,20 @@ async def upload_document(
     doc.status = "ready"
     doc.chunk_count = len(db_chunks)
     doc.page_count = len(pages)
+
+    # Capture values before commit (commit expires ORM attributes in async context)
+    doc_id = doc.id
+    doc_filename = doc.filename
+    num_chunks = len(db_chunks)
+    num_pages = len(pages)
     await session.commit()
 
     embed_status = "with embeddings" if embeddings else "without embeddings"
     return DocumentUploadResponse(
-        document_id=doc.id,
-        filename=doc.filename,
+        document_id=doc_id,
+        filename=doc_filename,
         status="ready",
-        message=f"Extracted {len(db_chunks)} chunks from {len(pages)} pages ({embed_status})",
+        message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status})",
     )
 
 
