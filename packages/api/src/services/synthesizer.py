@@ -70,7 +70,7 @@ async def generate_questions(
     if not context_groups:
         return []
 
-    goldens = synthesizer.generate_goldens(
+    goldens = await synthesizer.a_generate_goldens_from_contexts(
         contexts=context_groups,
         max_goldens_per_context=max(1, max_questions // len(context_groups)),
     )
