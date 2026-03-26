@@ -68,6 +68,11 @@ export async function compareEvalRuns(
     return ComparisonResponseSchema.parse(data);
 }
 
+export async function deleteEvalRun(id: number): Promise<void> {
+    const response = await fetch(`/api/evaluations/${id}`, { method: 'DELETE' });
+    if (!response.ok) throw new Error('Failed to delete evaluation run');
+}
+
 export async function synthesizeQuestions(
     maxQuestions: number = 10,
     documentIds?: number[],
@@ -80,7 +85,10 @@ export async function synthesizeQuestions(
             document_ids: documentIds ?? null,
         }),
     });
-    if (!response.ok) throw new Error('Failed to synthesize questions');
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail ?? 'Failed to synthesize questions');
+    }
     const data = await response.json();
     return SynthesizeResponseSchema.parse(data);
 }

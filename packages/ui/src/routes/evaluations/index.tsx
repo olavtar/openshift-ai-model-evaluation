@@ -2,7 +2,12 @@
 
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
-import { useEvalRuns, useCreateEvalRun, useSynthesizeQuestions } from '../../hooks/evaluation';
+import {
+    useEvalRuns,
+    useCreateEvalRun,
+    useDeleteEvalRun,
+    useSynthesizeQuestions,
+} from '../../hooks/evaluation';
 import { useModels } from '../../hooks/models';
 import { BarChart3, Plus, Trash2, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
@@ -23,39 +28,52 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
-function RunRow({ run }: { run: EvalRun }) {
+function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => void }) {
     return (
-        <Link
-            to="/evaluations/$id"
-            params={{ id: String(run.id) }}
-            className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-accent"
-        >
-            <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                    <span className="font-medium">{run.model_name}</span>
-                    <StatusBadge status={run.status} />
+        <div className="flex items-center gap-2 rounded-lg border transition-colors hover:bg-accent">
+            <Link
+                to="/evaluations/$id"
+                params={{ id: String(run.id) }}
+                className="flex flex-1 items-center justify-between p-4"
+            >
+                <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium">{run.model_name}</span>
+                        <StatusBadge status={run.status} />
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                        Run #{run.id} -- {run.completed_questions}/{run.total_questions} questions
+                        {run.created_at &&
+                            ` -- ${new Date(run.created_at).toLocaleDateString()}`}
+                    </span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                    Run #{run.id} -- {run.completed_questions}/{run.total_questions} questions
-                    {run.created_at && ` -- ${new Date(run.created_at).toLocaleDateString()}`}
-                </span>
-            </div>
-            <div className="flex items-center gap-6 text-sm">
-                <div className="text-center">
-                    <div className="text-xs text-muted-foreground">Ground.</div>
-                    <div className="font-medium">{formatScore(run.avg_groundedness)}</div>
+                <div className="flex items-center gap-6 text-sm">
+                    <div className="text-center">
+                        <div className="text-xs text-muted-foreground">Ground.</div>
+                        <div className="font-medium">{formatScore(run.avg_groundedness)}</div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-xs text-muted-foreground">Relev.</div>
+                        <div className="font-medium">{formatScore(run.avg_relevancy)}</div>
+                    </div>
+                    <div className="text-center">
+                        <div className="text-xs text-muted-foreground">Latency</div>
+                        <div className="font-medium">{formatLatency(run.avg_latency_ms)}</div>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <div className="text-center">
-                    <div className="text-xs text-muted-foreground">Relev.</div>
-                    <div className="font-medium">{formatScore(run.avg_relevancy)}</div>
-                </div>
-                <div className="text-center">
-                    <div className="text-xs text-muted-foreground">Latency</div>
-                    <div className="font-medium">{formatLatency(run.avg_latency_ms)}</div>
-                </div>
-                <ArrowRight className="h-4 w-4 text-muted-foreground" />
-            </div>
-        </Link>
+            </Link>
+            <button
+                onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(run.id);
+                }}
+                className="mr-3 rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                title="Delete evaluation run"
+            >
+                <Trash2 className="h-4 w-4" />
+            </button>
+        </div>
     );
 }
 
@@ -195,6 +213,10 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
                 Run Evaluation
             </button>
 
+            {synthesizeMutation.error && (
+                <p className="mt-2 text-sm text-destructive">{synthesizeMutation.error.message}</p>
+            )}
+
             {createMutation.error && (
                 <p className="mt-2 text-sm text-destructive">{createMutation.error.message}</p>
             )}
@@ -264,6 +286,7 @@ function CompareSelector({ runs }: { runs: EvalRun[] }) {
 
 function EvaluationsPage() {
     const { data: runs, isLoading, error, refetch } = useEvalRuns();
+    const deleteMutation = useDeleteEvalRun();
     const [showForm, setShowForm] = useState(false);
 
     return (
@@ -319,7 +342,11 @@ function EvaluationsPage() {
                 {runs && runs.length > 0 && (
                     <div className="space-y-3">
                         {runs.map((run) => (
-                            <RunRow key={run.id} run={run} />
+                            <RunRow
+                                key={run.id}
+                                run={run}
+                                onDelete={(id) => deleteMutation.mutate(id)}
+                            />
                         ))}
                     </div>
                 )}

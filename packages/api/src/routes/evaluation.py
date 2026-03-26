@@ -219,6 +219,19 @@ async def list_eval_runs(
     return [_build_run_response(r) for r in runs]
 
 
+@router.delete("/{eval_run_id}", status_code=204)
+async def delete_eval_run(
+    eval_run_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete an evaluation run and its results."""
+    run = await session.get(EvalRun, eval_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    await session.delete(run)
+    await session.commit()
+
+
 @router.post("/synthesize", response_model=SynthesizeResponse)
 async def synthesize_questions(
     request: SynthesizeRequest,
