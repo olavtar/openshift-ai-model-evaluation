@@ -14,6 +14,9 @@ export function Header() {
           <Link to="/" className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
             Dashboard
           </Link>
+          <Link to="/documents" className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+            Documents
+          </Link>
           <Link to="/evaluations" className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
             Evaluations
           </Link>
