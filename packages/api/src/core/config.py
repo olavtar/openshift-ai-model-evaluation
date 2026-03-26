@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = (
-        "postgresql+asyncpg://user:password@localhost:5432/model-evaluation"
+        "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
     )
 
     # Model serving (MaaS defaults)
