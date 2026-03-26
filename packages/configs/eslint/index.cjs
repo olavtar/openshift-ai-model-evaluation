@@ -8,6 +8,9 @@ const prettier = require('eslint-config-prettier');
 const globals = require('globals');
 
 module.exports = [
+  {
+    ignores: ['dist/**', 'storybook-static/**', 'node_modules/**'],
+  },
   js.configs.recommended,
   {
     files: ['**/*.{ts,tsx,js,jsx}'],
