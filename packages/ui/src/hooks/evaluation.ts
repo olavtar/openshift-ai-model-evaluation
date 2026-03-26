@@ -5,6 +5,7 @@ import {
     listEvalRuns,
     getEvalRun,
     createEvalRun,
+    deleteEvalRun,
     rerunEval,
     compareEvalRuns,
     synthesizeQuestions,
@@ -33,6 +34,16 @@ export function useCreateEvalRun() {
     return useMutation({
         mutationFn: ({ modelName, questions }: { modelName: string; questions: string[] }) =>
             createEvalRun(modelName, questions),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['eval-runs'] });
+        },
+    });
+}
+
+export function useDeleteEvalRun() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: (id: number) => deleteEvalRun(id),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['eval-runs'] });
         },
