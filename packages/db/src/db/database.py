@@ -1,21 +1,38 @@
+# This project was developed with assistance from AI tools.
+
 """
 Database configuration and utilities
 """
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import text
-from typing import Dict, Any
+import os
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
-DATABASE_URL = "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import text
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+
+class Base(DeclarativeBase):
+    """Base class for all database models."""
+    pass
+
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql+asyncpg://user:password@localhost:5432/model-evaluation"
+)
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=os.environ.get("DB_ECHO", "false").lower() == "true",
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+    pool_recycle=3600
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, class_=AsyncSession)
-
-Base = declarative_base()
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +47,7 @@ class DatabaseService:
         self.engine = engine or globals()['engine']
         self.start_time = SERVICE_START_TIME
     
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """
         Perform database health check
         
@@ -55,7 +72,7 @@ class DatabaseService:
                 "start_time": self.start_time.isoformat()
             }
         except Exception as e:
-            logger.error(f"Database health check failed: {e}")
+            logger.error("Database health check failed: %s", e)
             return {
                 "name": "Database", 
                 "status": "down",

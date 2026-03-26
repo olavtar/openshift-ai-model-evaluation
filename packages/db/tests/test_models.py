@@ -2,6 +2,8 @@
 
 """Model schema tests (no database required)."""
 
+# NOTE: These tests verify ORM metadata configuration. They complement (but don't replace) integration tests that exercise actual database operations.
+
 from db.models import ModelConfig
 
 

@@ -1,3 +1,5 @@
+# This project was developed with assistance from AI tools.
+
 __version__ = "0.0.0"
 
 # Export main database classes and functions

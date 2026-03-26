@@ -3,10 +3,9 @@
 
 import logging
 
-from sqlalchemy import select, text
+from db import Chunk, Document
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from db import Chunk, EMBEDDING_DIMENSION
 
 from .embedding import generate_embeddings
 
@@ -54,7 +53,8 @@ async def _vector_search(
             Chunk.page_number,
             (1 - Chunk.embedding.cosine_distance(embedding_str)).label("score"),
         )
-        .where(Chunk.embedding.isnot(None))
+        .join(Document, Chunk.document_id == Document.id)
+        .where(Chunk.embedding.isnot(None), Document.deleted_at.is_(None))
         .order_by(Chunk.embedding.cosine_distance(embedding_str))
         .limit(top_k)
     )
@@ -86,6 +86,8 @@ async def _fallback_search(
             Chunk.source_document,
             Chunk.page_number,
         )
+        .join(Document, Chunk.document_id == Document.id)
+        .where(Document.deleted_at.is_(None))
         .order_by(Chunk.created_at.desc())
         .limit(top_k)
     )

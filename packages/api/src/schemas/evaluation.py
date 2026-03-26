@@ -1,6 +1,9 @@
 # This project was developed with assistance from AI tools.
 """Pydantic schemas for the evaluation endpoints."""
 
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -33,7 +36,7 @@ class EvalRunResponse(BaseModel):
 
     id: int
     model_name: str
-    status: str
+    status: Literal["pending", "running", "completed", "failed"]
     total_questions: int
     completed_questions: int
     avg_latency_ms: float | None = None
@@ -44,8 +47,8 @@ class EvalRunResponse(BaseModel):
     hallucination_rate: float | None = None
     total_tokens: int | None = None
     error_message: str | None = None
-    created_at: str | None = None
-    completed_at: str | None = None
+    created_at: datetime | None = None
+    completed_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

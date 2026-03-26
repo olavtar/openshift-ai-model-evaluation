@@ -1,7 +1,13 @@
 # This project was developed with assistance from AI tools.
 """Application configuration via pydantic-settings."""
 
+import logging
+from typing import Self
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -33,6 +39,16 @@ class Settings(BaseSettings):
     JUDGE_MODEL_NAME: str = "granite-3.1-8b-instruct"
 
     model_config = {"env_file": ".env"}
+
+    @model_validator(mode="after")
+    def validate_api_token(self) -> Self:
+        """Warn if MODEL_API_TOKEN is not set."""
+        if not self.MODEL_API_TOKEN:
+            logger.warning(
+                "MODEL_API_TOKEN is not set. LLM calls will fail. "
+                "Set MODEL_API_TOKEN environment variable to enable model serving."
+            )
+        return self
 
 
 settings = Settings()

@@ -13,20 +13,12 @@ import {
     Clock,
 } from 'lucide-react';
 import type { EvalResult } from '../../schemas/evaluation';
+import { formatScore, formatLatency } from '../../lib/format';
+import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
 
 export const Route = createFileRoute('/evaluations/$id')({
     component: EvalRunDetailPage,
 });
-
-function formatScore(val: number | null | undefined): string {
-    if (val == null) return '--';
-    return (val * 100).toFixed(0) + '%';
-}
-
-function formatLatency(val: number | null | undefined): string {
-    if (val == null) return '--';
-    return val.toFixed(0) + 'ms';
-}
 
 function ScoreColor({ score }: { score: number | null | undefined }) {
     if (score == null) return <span className="text-muted-foreground">--</span>;
@@ -204,13 +196,7 @@ function EvalRunDetailPage() {
                             </span>
                         )}
                         <span
-                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                                run.status === 'completed'
-                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                    : run.status === 'running'
-                                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
-                                      : 'bg-slate-100 text-slate-700 dark:bg-slate-900/60 dark:text-slate-300'
-                            }`}
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${EVAL_STATUS_COLORS[run.status] ?? EVAL_STATUS_COLORS.pending}`}
                         >
                             {run.status}
                         </span>

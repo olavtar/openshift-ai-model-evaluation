@@ -2,16 +2,13 @@
 
 import { useState } from 'react';
 import { Send, FileText, AlertTriangle, Loader2 } from 'lucide-react';
-import { useQuery } from '../../hooks/query';
+import { useSubmitQuery } from '../../hooks/query';
 import { ModelSelector } from '../model-selector/model-selector';
 import type { Model } from '../../schemas/models';
 import type { QueryResponse, SourceChunk } from '../../schemas/query';
 import { cn } from '../../lib/utils';
 
-const CONFIDENCE_THRESHOLD = 0.5;
-
-function ConfidenceBadge({ score }: { score: number }) {
-    const isLow = score < CONFIDENCE_THRESHOLD;
+function ConfidenceBadge({ score, isLow }: { score: number; isLow: boolean }) {
     return (
         <span
             className={cn(
@@ -27,7 +24,7 @@ function ConfidenceBadge({ score }: { score: number }) {
     );
 }
 
-function SourceCard({ source }: { source: SourceChunk }) {
+function SourceCard({ source, isLowConfidence }: { source: SourceChunk; isLowConfidence: boolean }) {
     const [isExpanded, setIsExpanded] = useState(false);
 
     return (
@@ -40,7 +37,7 @@ function SourceCard({ source }: { source: SourceChunk }) {
                         <span className="shrink-0 text-[10px] text-muted-foreground">p. {source.page_number}</span>
                     )}
                 </div>
-                <ConfidenceBadge score={source.score} />
+                <ConfidenceBadge score={source.score} isLow={isLowConfidence} />
             </div>
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
@@ -91,7 +88,7 @@ function AnswerDisplay({ response }: { response: QueryResponse }) {
                     </h4>
                     <div className="space-y-2">
                         {response.sources.map((source) => (
-                            <SourceCard key={source.id} source={source} />
+                            <SourceCard key={source.id} source={source} isLowConfidence={hasLowConfidence} />
                         ))}
                     </div>
                 </div>
@@ -103,7 +100,7 @@ function AnswerDisplay({ response }: { response: QueryResponse }) {
 export function QueryPanel() {
     const [question, setQuestion] = useState('');
     const [selectedModel, setSelectedModel] = useState<Model | null>(null);
-    const { mutate, data: response, isPending, error, reset } = useQuery();
+    const { mutate, data: response, isPending, error, reset } = useSubmitQuery();
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();

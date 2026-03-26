@@ -1,6 +1,6 @@
 // This project was developed with assistance from AI tools.
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useModels } from '../../hooks/models';
 import { Server, ChevronDown, Check } from 'lucide-react';
 import type { Model } from '../../schemas/models';
@@ -14,11 +14,27 @@ interface ModelSelectorProps {
 export function ModelSelector({ selectedModelId, onSelect, label }: ModelSelectorProps) {
     const { data: models, isLoading, error } = useModels();
     const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const selectedModel = models?.find((m) => m.id === selectedModelId);
 
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        }
+
+        if (isOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => {
+                document.removeEventListener('mousedown', handleClickOutside);
+            };
+        }
+    }, [isOpen]);
+
     return (
-        <div className="relative">
+        <div className="relative" ref={containerRef}>
             <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{label}</label>
             <button
                 onClick={() => setIsOpen(!isOpen)}

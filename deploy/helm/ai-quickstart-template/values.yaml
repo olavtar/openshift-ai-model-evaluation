@@ -19,6 +19,8 @@ models:
     deploymentMode: "maas"
   # Embedding model for RAG pipeline
   embeddingModel: "nomic-embed-text-v1.5"
+  # Judge model for evaluation metrics (DeepEval)
+  judgeModel: "granite-3.1-8b-instruct"
 
 # Secrets configuration - override with actual secrets
 secrets:

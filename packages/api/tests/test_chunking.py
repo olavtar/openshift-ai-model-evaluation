@@ -1,7 +1,7 @@
 # This project was developed with assistance from AI tools.
 """Tests for text chunking service."""
 
-from src.services.chunking import CHUNK_OVERLAP, CHUNK_SIZE, chunk_text
+from src.services.chunking import CHUNK_SIZE, chunk_text
 
 
 def test_short_text_returns_single_chunk():

@@ -3,13 +3,13 @@
 
 import io
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import UTC, datetime
 
+from db import Chunk, Document, get_db
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from db import Chunk, Document, get_db
 
 from ..schemas.documents import (
     DocumentResponse,
@@ -54,12 +54,22 @@ async def upload_document(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    if file.content_type and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Invalid content type")
+
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File exceeds 50 MB limit")
 
+    # Validate PDF magic bytes
+    if not content.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File is not a valid PDF")
+
+    # Sanitize filename
+    safe_filename = os.path.basename(file.filename).replace("..", "")
+
     doc = Document(
-        filename=file.filename,
+        filename=safe_filename,
         status="processing",
         file_size_bytes=len(content),
     )
@@ -85,7 +95,7 @@ async def upload_document(
     for page in pages:
         page_chunks = chunk_text(
             text=page["text"],
-            source_document=file.filename,
+            source_document=safe_filename,
             page_number=str(page["page_number"]),
         )
         all_chunks.extend(page_chunks)
@@ -174,12 +184,13 @@ async def delete_document(
     document_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft-delete a document."""
+    """Soft-delete a document (idempotent)."""
     doc = await session.get(Document, document_id)
-    if not doc or doc.deleted_at is not None:
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    doc.deleted_at = datetime.now(timezone.utc)
-    await session.commit()
+    if doc.deleted_at is None:
+        doc.deleted_at = datetime.now(UTC)
+        await session.commit()
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)

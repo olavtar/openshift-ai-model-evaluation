@@ -3,11 +3,10 @@
 
 import logging
 
+from db import Chunk, Document
 from deepeval.synthesizer import Synthesizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from db import Chunk, Document
 
 from ..core.config import settings
 from .scoring import MaaSJudgeModel
@@ -67,6 +66,9 @@ async def generate_questions(
     for i in range(0, len(chunk_texts), 2):
         group = chunk_texts[i : i + 2]
         context_groups.append(group)
+
+    if not context_groups:
+        return []
 
     goldens = synthesizer.generate_goldens(
         contexts=context_groups,

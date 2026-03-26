@@ -4,6 +4,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useCompareEvalRuns } from '../../hooks/evaluation';
 import { ArrowLeft, Loader2, Trophy, Minus } from 'lucide-react';
 import type { ComparisonMetric, EvalResult } from '../../schemas/evaluation';
+import { formatScore, formatLatency, formatMetricValue } from '../../lib/format';
 
 interface CompareSearch {
     run_a: number;
@@ -17,22 +18,6 @@ export const Route = createFileRoute('/evaluations/compare')({
     }),
     component: ComparePage,
 });
-
-function formatScore(val: number | null | undefined): string {
-    if (val == null) return '--';
-    return (val * 100).toFixed(0) + '%';
-}
-
-function formatLatency(val: number | null | undefined): string {
-    if (val == null) return '--';
-    return val.toFixed(0) + 'ms';
-}
-
-function formatMetricValue(metric: string, val: number | null | undefined): string {
-    if (val == null) return '--';
-    if (metric === 'latency_ms') return val.toFixed(0) + 'ms';
-    return (val * 100).toFixed(0) + '%';
-}
 
 const METRIC_LABELS: Record<string, string> = {
     groundedness: 'Groundedness',

@@ -1,7 +1,7 @@
 # This project was developed with assistance from AI tools.
 """Tests for DeepEval scoring service."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -44,7 +44,7 @@ async def test_score_result_returns_all_metrics(_mock_settings):
 
     mock_metric = MagicMock()
     mock_metric.score = 0.85
-    mock_metric.measure = MagicMock()
+    mock_metric.a_measure = AsyncMock()
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
@@ -70,11 +70,11 @@ async def test_score_result_detects_hallucination(_mock_settings):
 
     low_score_metric = MagicMock()
     low_score_metric.score = 0.4
-    low_score_metric.measure = MagicMock()
+    low_score_metric.a_measure = AsyncMock()
 
     high_score_metric = MagicMock()
     high_score_metric.score = 0.9
-    high_score_metric.measure = MagicMock()
+    high_score_metric.a_measure = AsyncMock()
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=low_score_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=high_score_metric), \
@@ -96,11 +96,11 @@ async def test_score_result_handles_metric_failure(_mock_settings):
     from src.services.scoring import score_result
 
     failing_metric = MagicMock()
-    failing_metric.measure = MagicMock(side_effect=RuntimeError("Judge model unavailable"))
+    failing_metric.a_measure = AsyncMock(side_effect=RuntimeError("Judge model unavailable"))
 
     ok_metric = MagicMock()
     ok_metric.score = 0.9
-    ok_metric.measure = MagicMock()
+    ok_metric.a_measure = AsyncMock()
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=failing_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=ok_metric), \
