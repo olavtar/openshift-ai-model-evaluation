@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # Judge model for evaluation scoring (uses MaaS endpoint)
     JUDGE_MODEL_NAME: str = "granite-3.1-8b-instruct"
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
     @model_validator(mode="after")
     def validate_api_token(self) -> Self:
