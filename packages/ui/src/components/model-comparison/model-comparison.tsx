@@ -1,80 +1,85 @@
 // This project was developed with assistance from AI tools.
 
-import { useState } from 'react';
-import { ModelSelector } from '../model-selector/model-selector';
-import { useModelStatus } from '../../hooks/models';
-import { GitCompareArrows } from 'lucide-react';
-import type { Model } from '../../schemas/models';
-import { MODEL_STATUS_COLORS } from '../../lib/status-colors';
-
-function ModelStatusBadge({ modelId }: { modelId: number | null }) {
-    const { data: status, isLoading } = useModelStatus(modelId ?? 0);
-
-    if (!modelId) return null;
-    if (isLoading) return <span className="text-xs text-muted-foreground">Checking...</span>;
-
-    const color = MODEL_STATUS_COLORS[status?.status ?? ''] ?? MODEL_STATUS_COLORS.unavailable;
-
-    return (
-        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${color}`}>
-            {status?.status ?? 'unknown'}
-        </span>
-    );
-}
+import { Link } from '@tanstack/react-router';
+import { GitCompareArrows, ArrowRight } from 'lucide-react';
+import { useEvalRuns } from '../../hooks/evaluation';
+import { formatScore, formatLatency } from '../../lib/format';
 
 export function ModelComparison() {
-    const [modelA, setModelA] = useState<Model | null>(null);
-    const [modelB, setModelB] = useState<Model | null>(null);
+    const { data: runs } = useEvalRuns();
+    const completedRuns = runs?.filter((r) => r.status === 'completed') ?? [];
 
     return (
         <div className="rounded-xl border bg-card p-4">
             <div className="mb-4 flex items-center gap-2">
                 <GitCompareArrows className="h-5 w-5" />
-                <h2 className="text-lg font-semibold">Model Comparison</h2>
-            </div>
-            <p className="mb-4 text-sm text-muted-foreground">
-                Select two models to compare their evaluation results side by side.
-            </p>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                    <ModelSelector
-                        selectedModelId={modelA?.id ?? null}
-                        onSelect={setModelA}
-                        label="Model A"
-                    />
-                    {modelA && (
-                        <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
-                            <div className="flex-1">
-                                <p className="text-xs font-medium">{modelA.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{modelA.deployment_mode}</p>
-                            </div>
-                            <ModelStatusBadge modelId={modelA.id} />
-                        </div>
-                    )}
-                </div>
-
-                <div className="space-y-2">
-                    <ModelSelector
-                        selectedModelId={modelB?.id ?? null}
-                        onSelect={setModelB}
-                        label="Model B"
-                    />
-                    {modelB && (
-                        <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
-                            <div className="flex-1">
-                                <p className="text-xs font-medium">{modelB.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{modelB.deployment_mode}</p>
-                            </div>
-                            <ModelStatusBadge modelId={modelB.id} />
-                        </div>
-                    )}
-                </div>
+                <h2 className="text-lg font-semibold">Evaluation Results</h2>
             </div>
 
-            {modelA && modelB && (
-                <div className="mt-4 rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-                    Evaluation comparison will appear here once benchmarks are configured.
+            {completedRuns.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-4 text-center">
+                    <p className="text-sm text-muted-foreground">
+                        No completed evaluations yet.
+                    </p>
+                    <Link
+                        to="/evaluations"
+                        className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                    >
+                        Run your first evaluation
+                        <ArrowRight className="h-3.5 w-3.5" />
+                    </Link>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {completedRuns.slice(0, 3).map((run) => (
+                        <Link
+                            key={run.id}
+                            to="/evaluations/$id"
+                            params={{ id: String(run.id) }}
+                            className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-accent"
+                        >
+                            <div>
+                                <span className="text-sm font-medium">{run.model_name}</span>
+                                <span className="ml-2 text-xs text-muted-foreground">
+                                    Run #{run.id}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs">
+                                <div className="text-center">
+                                    <div className="text-muted-foreground">Ground.</div>
+                                    <div className="font-medium">{formatScore(run.avg_groundedness)}</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-muted-foreground">Relev.</div>
+                                    <div className="font-medium">{formatScore(run.avg_relevancy)}</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-muted-foreground">Latency</div>
+                                    <div className="font-medium">{formatLatency(run.avg_latency_ms)}</div>
+                                </div>
+                                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                            </div>
+                        </Link>
+                    ))}
+
+                    {completedRuns.length > 3 && (
+                        <Link
+                            to="/evaluations"
+                            className="block text-center text-sm text-muted-foreground hover:text-foreground"
+                        >
+                            View all {completedRuns.length} completed evaluations
+                        </Link>
+                    )}
+
+                    {completedRuns.length >= 2 && (
+                        <Link
+                            to="/evaluations"
+                            className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+                        >
+                            Compare evaluations
+                            <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                    )}
                 </div>
             )}
         </div>

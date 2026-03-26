@@ -198,12 +198,16 @@ async def create_eval_run(
 
     await session.commit()
 
+    message = f"Evaluation started with {len(request.questions)} questions"
+    if not settings.MODEL_API_TOKEN:
+        message += ". Warning: MODEL_API_TOKEN is not configured -- scores will not be generated."
+
     return EvalRunCreateResponse(
         eval_run_id=run_id,
         model_name=run_model,
         status=run_status,
         total_questions=run_total,
-        message=f"Evaluation started with {len(request.questions)} questions",
+        message=message,
     )
 
 

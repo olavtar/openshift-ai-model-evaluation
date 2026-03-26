@@ -9,7 +9,7 @@ import {
     useSynthesizeQuestions,
 } from '../../hooks/evaluation';
 import { useModels } from '../../hooks/models';
-import { BarChart3, Plus, Trash2, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
+import { BarChart3, Plus, Trash2, Sparkles, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import { formatScore, formatLatency } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
@@ -49,7 +49,7 @@ function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => voi
                 </div>
                 <div className="flex items-center gap-6 text-sm">
                     <div className="text-center">
-                        <div className="text-xs text-muted-foreground">Ground.</div>
+                        <div className="text-xs text-muted-foreground">Faith.</div>
                         <div className="font-medium">{formatScore(run.avg_groundedness)}</div>
                     </div>
                     <div className="text-center">
@@ -84,6 +84,7 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
     const [selectedModel, setSelectedModel] = useState('');
     const [questions, setQuestions] = useState<string[]>([]);
     const [newQuestion, setNewQuestion] = useState('');
+    const [warningMessage, setWarningMessage] = useState('');
 
     const addQuestion = () => {
         const trimmed = newQuestion.trim();
@@ -115,7 +116,10 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
         createMutation.mutate(
             { modelName: selectedModel, questions },
             {
-                onSuccess: () => {
+                onSuccess: (data) => {
+                    if (data.message.includes('Warning')) {
+                        setWarningMessage(data.message);
+                    }
                     setQuestions([]);
                     setSelectedModel('');
                     onCreated();
@@ -126,7 +130,7 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
 
     return (
         <div className="rounded-xl border bg-card p-6">
-            <h3 className="mb-4 text-lg font-semibold">New Evaluation</h3>
+            <h3 className="mb-4 text-lg font-semibold">Run New Evaluation</h3>
 
             <div className="mb-4">
                 <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
@@ -220,6 +224,13 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
             {createMutation.error && (
                 <p className="mt-2 text-sm text-destructive">{createMutation.error.message}</p>
             )}
+
+            {warningMessage && (
+                <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <p className="text-xs text-amber-700 dark:text-amber-300">{warningMessage}</p>
+                </div>
+            )}
         </div>
     );
 }
@@ -294,9 +305,9 @@ function EvaluationsPage() {
             <div className="mx-auto max-w-5xl">
                 <div className="mb-6 flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Evaluations</h1>
+                        <h1 className="text-2xl font-bold tracking-tight">Evaluation Runs</h1>
                         <p className="text-sm text-muted-foreground">
-                            Run and compare model evaluations
+                            Run evaluations, then compare completed runs side by side.
                         </p>
                     </div>
                     <button
@@ -304,7 +315,7 @@ function EvaluationsPage() {
                         className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                     >
                         <Plus className="h-4 w-4" />
-                        New Evaluation
+                        Run New Evaluation
                     </button>
                 </div>
 
@@ -334,7 +345,8 @@ function EvaluationsPage() {
                     <div className="rounded-xl border bg-card p-8 text-center">
                         <BarChart3 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                         <p className="text-sm text-muted-foreground">
-                            No evaluations yet. Click &quot;New Evaluation&quot; to get started.
+                            No evaluations yet. Create runs for at least two models, then compare
+                            them in the Compare page.
                         </p>
                     </div>
                 )}

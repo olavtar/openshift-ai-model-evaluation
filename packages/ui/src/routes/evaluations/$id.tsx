@@ -97,7 +97,7 @@ function ResultRow({ result }: { result: EvalResult }) {
 
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div>
-                            <div className="text-xs text-muted-foreground">Groundedness</div>
+                            <div className="text-xs text-muted-foreground">Faithfulness</div>
                             <ScoreColor score={result.groundedness_score} />
                         </div>
                         <div>
@@ -182,9 +182,10 @@ function EvalRunDetailPage() {
 
                 <div className="mb-6 flex items-start justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">{run.model_name}</h1>
+                        <h1 className="text-2xl font-bold tracking-tight">
+                            Run #{run.id} - {run.model_name}
+                        </h1>
                         <p className="text-sm text-muted-foreground">
-                            Run #{run.id} --{' '}
                             {run.created_at && new Date(run.created_at).toLocaleString()}
                         </p>
                     </div>
@@ -206,7 +207,7 @@ function EvalRunDetailPage() {
                 {/* Summary metrics */}
                 <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <MetricCard
-                        label="Groundedness"
+                        label="Faithfulness"
                         value={formatScore(run.avg_groundedness)}
                         icon={<CheckCircle2 className="h-3.5 w-3.5" />}
                     />
@@ -273,7 +274,7 @@ function EvalRunDetailPage() {
                     <div className="mb-3 flex items-center justify-between">
                         <h2 className="text-lg font-semibold">Results</h2>
                         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <span>Ground.</span>
+                            <span>Faith.</span>
                             <span>Relev.</span>
                             <span>Latency</span>
                         </div>
