@@ -53,8 +53,8 @@ async def generate_questions(
 
     judge = MaaSJudgeModel(
         model_name=settings.JUDGE_MODEL_NAME,
-        base_url=settings.MAAS_ENDPOINT,
-        api_key=settings.MODEL_API_TOKEN,
+        base_url=settings.judge_endpoint,
+        api_key=settings.judge_token,
     )
 
     synthesizer = Synthesizer(model=judge)

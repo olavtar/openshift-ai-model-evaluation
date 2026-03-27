@@ -199,8 +199,9 @@ async def create_eval_run(
     await session.commit()
 
     message = f"Evaluation started with {len(request.questions)} questions"
-    if not settings.MODEL_API_TOKEN:
-        message += ". Warning: MODEL_API_TOKEN is not configured -- scores will not be generated."
+    model_cfg = settings.get_model_config(request.model_name)
+    if not model_cfg["token"]:
+        message += f". Warning: No API token configured for {request.model_name}."
 
     return EvalRunCreateResponse(
         eval_run_id=run_id,
@@ -246,10 +247,10 @@ async def synthesize_questions(
     Uses DeepEval's Synthesizer to create question/expected-answer pairs
     from document chunks. Optionally filter by specific document IDs.
     """
-    if not settings.MODEL_API_TOKEN:
+    if not settings.judge_token:
         raise HTTPException(
             status_code=400,
-            detail="MODEL_API_TOKEN is not configured. Set it to enable question generation.",
+            detail="No API token configured for the judge model. Set it to enable question generation.",
         )
 
     try:

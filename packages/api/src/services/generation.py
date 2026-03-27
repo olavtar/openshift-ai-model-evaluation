@@ -48,9 +48,10 @@ async def generate_answer(
     Returns:
         Dict with 'answer', 'model', 'usage' keys.
     """
-    if not settings.MODEL_API_TOKEN:
+    model_cfg = settings.get_model_config(model_name)
+    if not model_cfg["token"]:
         return {
-            "answer": "No MODEL_API_TOKEN configured. Cannot generate answers.",
+            "answer": f"No API token configured for model {model_name}.",
             "model": model_name,
             "usage": None,
         }
@@ -58,9 +59,9 @@ async def generate_answer(
     context = _build_context_block(chunks)
     user_message = f"Context:\n{context}\n\nQuestion: {question}"
 
-    url = f"{settings.MAAS_ENDPOINT}/v1/chat/completions"
+    url = f"{model_cfg['endpoint']}/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {settings.MODEL_API_TOKEN}",
+        "Authorization": f"Bearer {model_cfg['token']}",
         "Content-Type": "application/json",
     }
     payload = {
