@@ -19,13 +19,13 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]] | None:
     or endpoint error), allowing the upload to succeed without embeddings.
     Embeddings can be backfilled later.
     """
-    if not settings.MODEL_API_TOKEN:
-        logger.info("No MODEL_API_TOKEN configured -- skipping embeddings")
+    if not settings.embedding_token:
+        logger.info("No API token configured for embedding model -- skipping embeddings")
         return None
 
-    url = f"{settings.MAAS_ENDPOINT}/v1/embeddings"
+    url = f"{settings.embedding_endpoint}/v1/embeddings"
     headers = {
-        "Authorization": f"Bearer {settings.MODEL_API_TOKEN}",
+        "Authorization": f"Bearer {settings.embedding_token}",
         "Content-Type": "application/json",
     }
     payload = {

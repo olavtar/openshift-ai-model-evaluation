@@ -29,10 +29,10 @@ async def query(
     2. Sends the chunks as context to the specified LLM.
     3. Returns the generated answer with source citations.
     """
-    if not settings.MODEL_API_TOKEN:
+    if not settings.any_token_configured:
         raise HTTPException(
             status_code=400,
-            detail="MODEL_API_TOKEN is not configured. Set it in your environment to enable queries.",
+            detail="No API tokens configured. Set MODEL_A_API_TOKEN and MODEL_B_API_TOKEN in your environment.",
         )
 
     # Validate model_name

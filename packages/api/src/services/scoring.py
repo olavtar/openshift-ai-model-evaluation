@@ -69,8 +69,8 @@ def _get_judge_model() -> DeepEvalBaseLLM:
     """Create judge model from settings."""
     return MaaSJudgeModel(
         model_name=settings.JUDGE_MODEL_NAME,
-        base_url=settings.MAAS_ENDPOINT,
-        api_key=settings.MODEL_API_TOKEN,
+        base_url=settings.judge_endpoint,
+        api_key=settings.judge_token,
     )
 
 
@@ -91,8 +91,8 @@ async def score_result(
         context_precision_score, context_relevancy_score,
         and is_hallucination.
     """
-    if not settings.MODEL_API_TOKEN:
-        logger.warning("No MODEL_API_TOKEN set, skipping scoring")
+    if not settings.judge_token:
+        logger.warning("No API token for judge model, skipping scoring")
         return {}
 
     judge = _get_judge_model()
