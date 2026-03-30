@@ -78,6 +78,7 @@ async def score_result(
     question: str,
     answer: str,
     contexts: list[str],
+    expected_answer: str | None = None,
 ) -> dict:
     """Score a single RAG response using DeepEval metrics.
 
@@ -85,6 +86,8 @@ async def score_result(
         question: The input question.
         answer: The model's generated answer.
         contexts: Retrieved context chunks used for generation.
+        expected_answer: Optional ground truth answer. Required for
+            context precision scoring.
 
     Returns:
         Dict with relevancy_score, groundedness_score,
@@ -101,29 +104,33 @@ async def score_result(
         input=question,
         actual_output=answer,
         retrieval_context=contexts,
+        expected_output=expected_answer,
     )
 
     scores: dict = {}
 
-    metrics = [
+    metrics: list[tuple[str, object]] = [
         ("groundedness_score", FaithfulnessMetric(model=judge, threshold=0.5, async_mode=True)),
         ("relevancy_score", AnswerRelevancyMetric(model=judge, threshold=0.5, async_mode=True)),
-        (
-            "context_precision_score",
-            ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=True),
-        ),
         (
             "context_relevancy_score",
             ContextualRelevancyMetric(model=judge, threshold=0.5, async_mode=True),
         ),
     ]
 
+    # ContextualPrecisionMetric requires expected_output (ground truth)
+    if expected_answer:
+        metrics.append((
+            "context_precision_score",
+            ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=True),
+        ))
+
     for name, metric in metrics:
         try:
             await metric.a_measure(test_case)
             scores[name] = metric.score
         except Exception as e:
-            logger.error("Scoring failed for %s: %s", name, e)
+            logger.error("Scoring failed for %s: %s", name, e, exc_info=True)
             scores[name] = None
 
     groundedness = scores.get("groundedness_score")

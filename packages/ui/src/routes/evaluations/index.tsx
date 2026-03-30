@@ -9,7 +9,22 @@ import {
     useSynthesizeQuestions,
 } from '../../hooks/evaluation';
 import { useModels } from '../../hooks/models';
-import { BarChart3, Plus, Trash2, Sparkles, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
+import {
+    useQuestionSets,
+    useCreateQuestionSet,
+    useDeleteQuestionSet,
+} from '../../hooks/question-sets';
+import {
+    BarChart3,
+    Plus,
+    Trash2,
+    Sparkles,
+    ArrowRight,
+    Loader2,
+    AlertTriangle,
+    Save,
+    FolderOpen,
+} from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import { formatScore, formatLatency } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
@@ -39,10 +54,17 @@ function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => voi
                 <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                         <span className="font-medium">{run.model_name}</span>
+                        {run.question_set_name && (
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                                {run.question_set_name}
+                            </span>
+                        )}
                         <StatusBadge status={run.status} />
                     </div>
                     <span className="text-xs text-muted-foreground">
-                        Run #{run.id} -- {run.completed_questions}/{run.total_questions} questions
+                        Run #{run.id}
+                        {' -- '}
+                        {run.completed_questions}/{run.total_questions} questions
                         {run.created_at &&
                             ` -- ${new Date(run.created_at).toLocaleDateString()}`}
                     </span>
@@ -77,14 +99,30 @@ function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => voi
     );
 }
 
-function NewEvalForm({ onCreated }: { onCreated: () => void }) {
+function NewEvalForm({
+    onCreated,
+    onCancel,
+    initialQuestions,
+    initialQuestionSetId,
+}: {
+    onCreated: () => void;
+    onCancel: () => void;
+    initialQuestions?: string[];
+    initialQuestionSetId?: number;
+}) {
     const { data: models } = useModels();
+    const { data: questionSets } = useQuestionSets();
     const createMutation = useCreateEvalRun();
     const synthesizeMutation = useSynthesizeQuestions();
+    const saveSetMutation = useCreateQuestionSet();
+    const deleteSetMutation = useDeleteQuestionSet();
     const [selectedModel, setSelectedModel] = useState('');
-    const [questions, setQuestions] = useState<string[]>([]);
+    const [questions, setQuestions] = useState<string[]>(initialQuestions ?? []);
     const [newQuestion, setNewQuestion] = useState('');
     const [warningMessage, setWarningMessage] = useState('');
+    const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
+    const [saveSetName, setSaveSetName] = useState('');
+    const [showSaveSet, setShowSaveSet] = useState(false);
 
     const addQuestion = () => {
         const trimmed = newQuestion.trim();
@@ -114,7 +152,7 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
     const handleSubmit = () => {
         if (!selectedModel || questions.length === 0) return;
         createMutation.mutate(
-            { modelName: selectedModel, questions },
+            { modelName: selectedModel, questions, questionSetId: loadedSetId },
             {
                 onSuccess: (data) => {
                     if (data.message.includes('Warning')) {
@@ -151,16 +189,54 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
             </div>
 
             <div className="mb-4">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Questions ({questions.length})
-                </label>
+                <div className="mb-1.5 flex items-center justify-between">
+                    <label className="text-xs font-medium text-muted-foreground">
+                        Questions ({questions.length})
+                    </label>
+                    <div className="flex items-center gap-2">
+                        {questionSets && questionSets.length > 0 && (
+                            <select
+                                onChange={(e) => {
+                                    const set = questionSets.find(
+                                        (s) => s.id === Number(e.target.value),
+                                    );
+                                    if (set) {
+                                        setQuestions(set.questions);
+                                        setLoadedSetId(set.id);
+                                    }
+                                    e.target.value = '';
+                                }}
+                                className="rounded-lg border bg-background px-2 py-1 text-xs"
+                                defaultValue=""
+                            >
+                                <option value="" disabled>
+                                    Load question set...
+                                </option>
+                                {questionSets.map((s) => (
+                                    <option key={s.id} value={s.id}>
+                                        {s.name} ({s.questions.length}q)
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                    </div>
+                </div>
                 <div className="space-y-2">
                     {questions.map((q, i) => (
                         <div
                             key={i}
                             className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
                         >
-                            <span className="flex-1">{q}</span>
+                            <input
+                                type="text"
+                                value={q}
+                                onChange={(e) => {
+                                    const updated = [...questions];
+                                    updated[i] = e.target.value;
+                                    setQuestions(updated);
+                                }}
+                                className="flex-1 bg-transparent outline-none"
+                            />
                             <button
                                 onClick={() => removeQuestion(i)}
                                 className="text-muted-foreground hover:text-destructive"
@@ -190,32 +266,109 @@ function NewEvalForm({ onCreated }: { onCreated: () => void }) {
                     </button>
                 </div>
 
-                <button
-                    onClick={handleSynthesize}
-                    disabled={synthesizeMutation.isPending}
-                    className="mt-2 flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent disabled:opacity-50"
-                >
-                    {synthesizeMutation.isPending ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
+                <div className="mt-2 flex gap-2">
+                    <button
+                        onClick={handleSynthesize}
+                        disabled={synthesizeMutation.isPending}
+                        className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent disabled:opacity-50"
+                    >
+                        {synthesizeMutation.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Generate from documents
+                    </button>
+                    {questions.length > 0 && !showSaveSet && (
+                        <button
+                            onClick={() => setShowSaveSet(true)}
+                            className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
+                        >
+                            <Save className="h-3.5 w-3.5" />
+                            Save as question set
+                        </button>
                     )}
-                    Generate from documents
-                </button>
+                </div>
+
+                {showSaveSet && (
+                    <div className="mt-2 flex gap-2">
+                        <input
+                            type="text"
+                            value={saveSetName}
+                            onChange={(e) => setSaveSetName(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && saveSetName.trim()) {
+                                    saveSetMutation.mutate(
+                                        { name: saveSetName.trim(), questions },
+                                        {
+                                            onSuccess: () => {
+                                                setSaveSetName('');
+                                                setShowSaveSet(false);
+                                            },
+                                        },
+                                    );
+                                }
+                            }}
+                            placeholder="Name for this question set"
+                            className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm"
+                            autoFocus
+                        />
+                        <button
+                            onClick={() => {
+                                if (!saveSetName.trim()) return;
+                                saveSetMutation.mutate(
+                                    { name: saveSetName.trim(), questions },
+                                    {
+                                        onSuccess: () => {
+                                            setSaveSetName('');
+                                            setShowSaveSet(false);
+                                        },
+                                    },
+                                );
+                            }}
+                            disabled={!saveSetName.trim() || saveSetMutation.isPending}
+                            className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                        >
+                            {saveSetMutation.isPending ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                                <Save className="h-3.5 w-3.5" />
+                            )}
+                            Save
+                        </button>
+                        <button
+                            onClick={() => {
+                                setShowSaveSet(false);
+                                setSaveSetName('');
+                            }}
+                            className="rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                )}
             </div>
 
-            <button
-                onClick={handleSubmit}
-                disabled={!selectedModel || questions.length === 0 || createMutation.isPending}
-                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-            >
-                {createMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                    <BarChart3 className="h-4 w-4" />
-                )}
-                Run Evaluation
-            </button>
+            <div className="flex gap-2">
+                <button
+                    onClick={handleSubmit}
+                    disabled={!selectedModel || questions.length === 0 || createMutation.isPending}
+                    className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                    {createMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <BarChart3 className="h-4 w-4" />
+                    )}
+                    Run Evaluation
+                </button>
+                <button
+                    onClick={onCancel}
+                    className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                >
+                    Cancel
+                </button>
+            </div>
 
             {synthesizeMutation.error && (
                 <p className="mt-2 text-sm text-destructive">{synthesizeMutation.error.message}</p>
@@ -295,10 +448,62 @@ function CompareSelector({ runs }: { runs: EvalRun[] }) {
     );
 }
 
+function QuestionSetsPanel({
+    onLoad,
+}: {
+    onLoad: (questions: string[], setId: number) => void;
+}) {
+    const { data: sets } = useQuestionSets();
+    const deleteMutation = useDeleteQuestionSet();
+
+    if (!sets || sets.length === 0) return null;
+
+    return (
+        <div className="rounded-xl border bg-card p-4">
+            <h3 className="mb-3 text-sm font-semibold">Saved Question Sets</h3>
+            <p className="mb-3 text-xs text-muted-foreground">
+                Click a set to load its questions into a new evaluation.
+            </p>
+            <div className="space-y-2">
+                {sets.map((s) => (
+                    <div
+                        key={s.id}
+                        className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 transition-colors hover:bg-accent"
+                    >
+                        <button
+                            onClick={() => onLoad(s.questions, s.id)}
+                            className="flex flex-1 flex-col text-left"
+                        >
+                            <span className="text-sm font-medium">{s.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                                {s.questions.length} questions
+                                {s.created_at &&
+                                    ` -- ${new Date(s.created_at).toLocaleDateString()}`}
+                            </span>
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                deleteMutation.mutate(s.id);
+                            }}
+                            className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            title="Delete question set"
+                        >
+                            <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function EvaluationsPage() {
     const { data: runs, isLoading, error, refetch } = useEvalRuns();
     const deleteMutation = useDeleteEvalRun();
     const [showForm, setShowForm] = useState(false);
+    const [preloadedQuestions, setPreloadedQuestions] = useState<string[] | undefined>();
+    const [preloadedSetId, setPreloadedSetId] = useState<number | undefined>();
 
     return (
         <div className="p-4 sm:p-6 lg:p-8">
@@ -311,7 +516,11 @@ function EvaluationsPage() {
                         </p>
                     </div>
                     <button
-                        onClick={() => setShowForm(!showForm)}
+                        onClick={() => {
+                            setPreloadedQuestions(undefined);
+                            setPreloadedSetId(undefined);
+                            setShowForm(true);
+                        }}
                         className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                     >
                         <Plus className="h-4 w-4" />
@@ -319,22 +528,42 @@ function EvaluationsPage() {
                     </button>
                 </div>
 
-                {showForm && (
-                    <div className="mb-6">
-                        <NewEvalForm
-                            onCreated={() => {
-                                setShowForm(false);
-                                refetch();
-                            }}
-                        />
-                    </div>
-                )}
-
                 {runs && runs.length >= 2 && (
                     <div className="mb-6">
                         <CompareSelector runs={runs} />
                     </div>
                 )}
+
+                {showForm && (
+                    <div className="mb-6">
+                        <NewEvalForm
+                            key={JSON.stringify(preloadedQuestions)}
+                            initialQuestions={preloadedQuestions}
+                            initialQuestionSetId={preloadedSetId}
+                            onCreated={() => {
+                                setShowForm(false);
+                                setPreloadedQuestions(undefined);
+                                setPreloadedSetId(undefined);
+                                refetch();
+                            }}
+                            onCancel={() => {
+                                setShowForm(false);
+                                setPreloadedQuestions(undefined);
+                                setPreloadedSetId(undefined);
+                            }}
+                        />
+                    </div>
+                )}
+
+                <div className="mb-6">
+                    <QuestionSetsPanel
+                        onLoad={(questions, setId) => {
+                            setPreloadedQuestions(questions);
+                            setPreloadedSetId(setId);
+                            setShowForm(true);
+                        }}
+                    />
+                </div>
 
                 {isLoading && (
                     <p className="text-sm text-muted-foreground">Loading evaluations...</p>

@@ -17,11 +17,16 @@ import { z } from 'zod';
 export async function createEvalRun(
     modelName: string,
     questions: string[],
+    questionSetId?: number,
 ): Promise<EvalRunCreateResponse> {
     const response = await fetch('/api/evaluations/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_name: modelName, questions }),
+        body: JSON.stringify({
+            model_name: modelName,
+            questions,
+            question_set_id: questionSetId ?? null,
+        }),
     });
     if (!response.ok) throw new Error('Failed to create evaluation run');
     const data = await response.json();

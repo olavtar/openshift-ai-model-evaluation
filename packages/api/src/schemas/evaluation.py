@@ -12,6 +12,7 @@ class EvalRunCreate(BaseModel):
 
     model_name: str = Field(..., min_length=1)
     questions: list[str] = Field(..., min_length=1, max_length=100)
+    question_set_id: int | None = None
 
 
 class EvalResultResponse(BaseModel):
@@ -36,6 +37,7 @@ class EvalRunResponse(BaseModel):
 
     id: int
     model_name: str
+    question_set_name: str | None = None
     status: Literal["pending", "running", "completed", "failed"]
     total_questions: int
     completed_questions: int

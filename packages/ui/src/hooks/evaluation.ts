@@ -32,8 +32,15 @@ export function useEvalRun(id: number) {
 export function useCreateEvalRun() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ modelName, questions }: { modelName: string; questions: string[] }) =>
-            createEvalRun(modelName, questions),
+        mutationFn: ({
+            modelName,
+            questions,
+            questionSetId,
+        }: {
+            modelName: string;
+            questions: string[];
+            questionSetId?: number;
+        }) => createEvalRun(modelName, questions, questionSetId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['eval-runs'] });
         },

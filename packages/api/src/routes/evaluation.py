@@ -177,6 +177,7 @@ async def create_eval_run(
     """
     run = EvalRun(
         model_name=request.model_name,
+        question_set_id=request.question_set_id,
         status="pending",
         total_questions=len(request.questions),
     )
@@ -279,6 +280,7 @@ def _build_run_response(run: EvalRun) -> EvalRunResponse:
     return EvalRunResponse(
         id=run.id,
         model_name=run.model_name,
+        question_set_name=run.question_set.name if run.question_set else None,
         status=run.status,
         total_questions=run.total_questions,
         completed_questions=run.completed_questions,
@@ -456,6 +458,7 @@ async def rerun_eval(
 
     run = EvalRun(
         model_name=request.model_name,
+        question_set_id=original_run.question_set_id,
         status="pending",
         total_questions=len(questions),
     )
