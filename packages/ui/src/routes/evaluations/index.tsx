@@ -5,6 +5,7 @@ import { useState } from 'react';
 import {
     useEvalRuns,
     useCreateEvalRun,
+    useCancelEvalRun,
     useDeleteEvalRun,
     useSynthesizeQuestions,
 } from '../../hooks/evaluation';
@@ -23,7 +24,7 @@ import {
     Loader2,
     AlertTriangle,
     Save,
-    FolderOpen,
+    XCircle,
 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import { formatScore, formatLatency } from '../../lib/format';
@@ -43,7 +44,19 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
-function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => void }) {
+function RunRow({
+    run,
+    onDelete,
+    onCancel,
+    isCancelling,
+}: {
+    run: EvalRun;
+    onDelete: (id: number) => void;
+    onCancel: (id: number) => void;
+    isCancelling: boolean;
+}) {
+    const isActive = run.status === 'pending' || run.status === 'running';
+
     return (
         <div className="flex items-center gap-2 rounded-lg border transition-colors hover:bg-accent">
             <Link
@@ -85,16 +98,39 @@ function RunRow({ run, onDelete }: { run: EvalRun; onDelete: (id: number) => voi
                     <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 </div>
             </Link>
-            <button
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(run.id);
-                }}
-                className="mr-3 rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                title="Delete evaluation run"
-            >
-                <Trash2 className="h-4 w-4" />
-            </button>
+            <div className="mr-3 flex items-center gap-1">
+                {isActive && (
+                    isCancelling ? (
+                        <span className="flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Cancelling...
+                        </span>
+                    ) : (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm('Cancel this evaluation run?\n\nPartial results will appear once the current question finishes processing.')) {
+                                    onCancel(run.id);
+                                }
+                            }}
+                            className="flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
+                        >
+                            <XCircle className="h-3.5 w-3.5" />
+                            Cancel
+                        </button>
+                    )
+                )}
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(run.id);
+                    }}
+                    className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                    title="Delete evaluation run"
+                >
+                    <Trash2 className="h-4 w-4" />
+                </button>
+            </div>
         </div>
     );
 }
@@ -115,7 +151,6 @@ function NewEvalForm({
     const createMutation = useCreateEvalRun();
     const synthesizeMutation = useSynthesizeQuestions();
     const saveSetMutation = useCreateQuestionSet();
-    const deleteSetMutation = useDeleteQuestionSet();
     const [selectedModel, setSelectedModel] = useState('');
     const [questions, setQuestions] = useState<string[]>(initialQuestions ?? []);
     const [newQuestion, setNewQuestion] = useState('');
@@ -500,10 +535,12 @@ function QuestionSetsPanel({
 
 function EvaluationsPage() {
     const { data: runs, isLoading, error, refetch } = useEvalRuns();
+    const cancelMutation = useCancelEvalRun();
     const deleteMutation = useDeleteEvalRun();
     const [showForm, setShowForm] = useState(false);
     const [preloadedQuestions, setPreloadedQuestions] = useState<string[] | undefined>();
     const [preloadedSetId, setPreloadedSetId] = useState<number | undefined>();
+    const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
 
     return (
         <div className="p-4 sm:p-6 lg:p-8">
@@ -586,6 +623,11 @@ function EvaluationsPage() {
                             <RunRow
                                 key={run.id}
                                 run={run}
+                                isCancelling={cancellingIds.has(run.id)}
+                                onCancel={(id) => {
+                                    setCancellingIds((prev) => new Set(prev).add(id));
+                                    cancelMutation.mutate(id);
+                                }}
                                 onDelete={(id) => deleteMutation.mutate(id)}
                             />
                         ))}
