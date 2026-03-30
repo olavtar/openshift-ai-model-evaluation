@@ -5,16 +5,23 @@ import {
     listEvalRuns,
     getEvalRun,
     createEvalRun,
+    cancelEvalRun,
     deleteEvalRun,
     rerunEval,
     compareEvalRuns,
     synthesizeQuestions,
 } from '../services/evaluation';
+import type { EvalRun } from '../schemas/evaluation';
 
 export function useEvalRuns() {
     return useQuery({
         queryKey: ['eval-runs'],
         queryFn: listEvalRuns,
+        refetchInterval: (query) => {
+            const runs = query.state.data;
+            const hasActive = runs?.some((r) => r.status === 'pending' || r.status === 'running');
+            return hasActive ? 3000 : false;
+        },
     });
 }
 
@@ -43,6 +50,41 @@ export function useCreateEvalRun() {
         }) => createEvalRun(modelName, questions, questionSetId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['eval-runs'] });
+        },
+    });
+}
+
+export function useCancelEvalRun() {
+    const queryClient = useQueryClient();
+
+    const pollForResults = (cancelledId: number, attempt = 0) => {
+        if (attempt >= 12) return; // Stop after ~60s
+        setTimeout(async () => {
+            const fresh = await listEvalRuns();
+            const serverRun = fresh.find((r) => r.id === cancelledId);
+            queryClient.setQueryData<EvalRun[]>(
+                ['eval-runs'],
+                fresh.map((run) =>
+                    run.id === cancelledId ? { ...run, status: 'cancelled' } : run,
+                ),
+            );
+            // Keep polling if server still says running (task hasn't finished yet)
+            if (serverRun && (serverRun.status === 'running' || serverRun.status === 'pending')) {
+                pollForResults(cancelledId, attempt + 1);
+            }
+        }, 5000);
+    };
+
+    return useMutation({
+        mutationFn: (id: number) => cancelEvalRun(id),
+        onSuccess: (_data, id) => {
+            // Optimistically mark the run as cancelled in the cache immediately
+            queryClient.setQueryData<EvalRun[]>(['eval-runs'], (old) =>
+                old?.map((run) => (run.id === id ? { ...run, status: 'cancelled' } : run)),
+            );
+            // Poll every 5s until the backend finishes the current question
+            // and reports the final cancelled status with partial aggregates
+            pollForResults(id);
         },
     });
 }

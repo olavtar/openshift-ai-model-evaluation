@@ -35,6 +35,10 @@ router = APIRouter()
 
 COMPARISON_TIE_THRESHOLD = 0.05
 
+# In-memory set of run IDs that have been requested to cancel.
+# The background task checks this between questions and stops early.
+_cancelled_runs: set[int] = set()
+
 
 async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str]) -> None:
     """Execute an evaluation run in the background.
@@ -64,10 +68,20 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
             hallucination_count = 0
             hallucination_scored_count = 0
 
+            def _is_cancelled() -> bool:
+                return eval_run_id in _cancelled_runs
+
             for question in questions:
+                if _is_cancelled():
+                    break
+
                 start = time.time()
                 try:
                     chunks = await retrieve_chunks(query=question, session=session)
+
+                    if _is_cancelled():
+                        break
+
                     result = await generate_answer(
                         question=question,
                         chunks=chunks,
@@ -78,6 +92,9 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
 
                     context_texts = [c["text"] for c in chunks] if chunks else []
                     contexts_str = "\n---\n".join(context_texts) if context_texts else None
+
+                    if _is_cancelled():
+                        break
 
                     scores = {}
                     if result["answer"] and context_texts:
@@ -132,9 +149,17 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                 run.completed_questions = completed
                 await session.commit()
 
-            run.status = "completed"
-            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
-            run.avg_latency_ms = total_latency / len(questions) if questions else None
+            # Set final status
+            if _is_cancelled():
+                _cancelled_runs.discard(eval_run_id)
+                run.status = "cancelled"
+                run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+            else:
+                run.status = "completed"
+                run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+
+            # Compute aggregates from whatever questions were completed
+            run.avg_latency_ms = total_latency / completed if completed else None
             run.total_tokens = total_tokens_sum or None
             run.avg_relevancy = sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
             run.avg_groundedness = (
@@ -159,8 +184,9 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
 
         except Exception as e:
             logger.exception("Evaluation run failed: %s", e)
-            run.status = "failed"
-            run.error_message = str(e)
+            if run.status != "cancelled":
+                run.status = "failed"
+                run.error_message = str(e)
             await session.commit()
 
 
@@ -236,6 +262,37 @@ async def delete_eval_run(
         raise HTTPException(status_code=404, detail="Evaluation run not found")
     await session.delete(run)
     await session.commit()
+
+
+@router.post("/{eval_run_id}/cancel")
+async def cancel_eval_run(
+    eval_run_id: int,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cancel a running or pending evaluation.
+
+    Signals the background task to stop after the current question.
+    Partial results are retained with aggregated scores.
+    """
+    run = await session.get(EvalRun, eval_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Evaluation run not found")
+    if run.status not in ("pending", "running"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel evaluation with status '{run.status}'",
+        )
+
+    _cancelled_runs.add(eval_run_id)
+
+    # If still pending (background task hasn't started yet), mark directly
+    if run.status == "pending":
+        run.status = "cancelled"
+        run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+        await session.commit()
+        _cancelled_runs.discard(eval_run_id)
+
+    return {"message": f"Cancellation requested for evaluation run #{eval_run_id}"}
 
 
 @router.post("/synthesize", response_model=SynthesizeResponse)

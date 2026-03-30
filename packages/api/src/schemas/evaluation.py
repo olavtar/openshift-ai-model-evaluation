@@ -38,7 +38,7 @@ class EvalRunResponse(BaseModel):
     id: int
     model_name: str
     question_set_name: str | None = None
-    status: Literal["pending", "running", "completed", "failed"]
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
     total_questions: int
     completed_questions: int
     avg_latency_ms: float | None = None

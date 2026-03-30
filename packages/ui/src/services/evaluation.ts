@@ -73,6 +73,15 @@ export async function compareEvalRuns(
     return ComparisonResponseSchema.parse(data);
 }
 
+export async function cancelEvalRun(id: number): Promise<{ message: string }> {
+    const response = await fetch(`/api/evaluations/${id}/cancel`, { method: 'POST' });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail ?? 'Failed to cancel evaluation run');
+    }
+    return response.json();
+}
+
 export async function deleteEvalRun(id: number): Promise<void> {
     const response = await fetch(`/api/evaluations/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Failed to delete evaluation run');
