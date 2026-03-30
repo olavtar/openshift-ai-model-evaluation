@@ -2,16 +2,12 @@
 
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useHealth } from '../hooks/health';
-import { useEvalRuns } from '../hooks/evaluation';
+import { useEvalRuns, useCompareEvalRuns } from '../hooks/evaluation';
 import { useDocuments } from '../hooks/documents';
 import {
     Monitor,
     Server,
     Database,
-    CheckCircle2,
-    AlertTriangle,
-    Clock,
-    Target,
     ArrowRight,
     BarChart3,
     GitCompareArrows,
@@ -25,24 +21,106 @@ export const Route = createFileRoute('/' as any)({
     component: Index,
 });
 
-function KpiCard({
+function MetricCompareRow({
     label,
-    value,
-    icon,
-    color,
+    valA,
+    valB,
+    format,
+    lowerIsBetter,
 }: {
     label: string;
-    value: string;
-    icon: React.ReactNode;
-    color?: string;
+    valA: number | null | undefined;
+    valB: number | null | undefined;
+    format: (v: number | null | undefined) => string;
+    lowerIsBetter?: boolean;
 }) {
+    const a = valA ?? null;
+    const b = valB ?? null;
+    let winnerA = false;
+    let winnerB = false;
+    if (a !== null && b !== null && Math.abs(a - b) >= 0.05) {
+        if (lowerIsBetter) {
+            winnerA = a < b;
+            winnerB = b < a;
+        } else {
+            winnerA = a > b;
+            winnerB = b > a;
+        }
+    }
     return (
-        <div className="rounded-lg border bg-card p-4">
-            <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                {icon}
-                {label}
+        <div className="grid grid-cols-3 items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+            <div className="text-muted-foreground">{label}</div>
+            <div className={`text-center font-medium ${winnerA ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+                {format(a)}
             </div>
-            <div className={`text-2xl font-bold ${color ?? ''}`}>{value}</div>
+            <div className={`text-center font-medium ${winnerB ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+                {format(b)}
+            </div>
+        </div>
+    );
+}
+
+function LatestComparison({ runAId, runBId }: { runAId: number; runBId: number }) {
+    const { data: comparison, isLoading } = useCompareEvalRuns(runAId, runBId);
+
+    if (isLoading) {
+        return (
+            <div className="mt-6 rounded-xl border bg-card p-4">
+                <p className="text-sm text-muted-foreground">Loading comparison...</p>
+            </div>
+        );
+    }
+
+    if (!comparison) return null;
+
+    const { run_a, run_b } = comparison;
+
+    return (
+        <div className="mt-6 rounded-xl border bg-card p-4">
+            <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-lg font-semibold">Latest Comparison</h2>
+                <Link
+                    to="/evaluations/compare"
+                    search={{ run_a: runAId, run_b: runBId }}
+                    className="text-sm text-muted-foreground hover:text-foreground"
+                >
+                    Full comparison <ArrowRight className="inline h-3.5 w-3.5" />
+                </Link>
+            </div>
+            <div className="mb-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
+                <div>Metric</div>
+                <div className="text-center">
+                    {run_a.model_name}
+                    {run_a.question_set_name && (
+                        <span className="ml-1 rounded bg-muted px-1 py-0.5">{run_a.question_set_name}</span>
+                    )}
+                </div>
+                <div className="text-center">
+                    {run_b.model_name}
+                    {run_b.question_set_name && (
+                        <span className="ml-1 rounded bg-muted px-1 py-0.5">{run_b.question_set_name}</span>
+                    )}
+                </div>
+            </div>
+            <div className="space-y-1">
+                <MetricCompareRow label="Faithfulness" valA={run_a.avg_groundedness} valB={run_b.avg_groundedness} format={formatScore} />
+                <MetricCompareRow label="Relevancy" valA={run_a.avg_relevancy} valB={run_b.avg_relevancy} format={formatScore} />
+                <MetricCompareRow label="Context Relevancy" valA={run_a.avg_context_relevancy} valB={run_b.avg_context_relevancy} format={formatScore} />
+                <MetricCompareRow
+                    label="Hallucination Rate"
+                    valA={run_a.hallucination_rate}
+                    valB={run_b.hallucination_rate}
+                    format={(v) => v != null ? (v * 100).toFixed(0) + '%' : '--'}
+                    lowerIsBetter
+                />
+                <MetricCompareRow
+                    label="Avg Latency"
+                    valA={run_a.avg_latency_ms}
+                    valB={run_b.avg_latency_ms}
+                    format={formatLatency}
+                    lowerIsBetter
+                />
+            </div>
         </div>
     );
 }
@@ -72,7 +150,6 @@ function Index() {
 
     const completedRuns =
         runs?.filter((r) => r.status === 'completed' || r.status === 'complete') ?? [];
-    const latestRun = completedRuns.length > 0 ? completedRuns[0] : null;
     const hasDocuments = (documents?.length ?? 0) > 0;
     const hasComparableRuns = completedRuns.length >= 2;
     const latestComparablePair = hasComparableRuns
@@ -148,7 +225,7 @@ function Index() {
                             {hasComparableRuns ? 'Ready to compare' : 'Setup required'}
                         </span>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-lg border p-3">
                             <div className="text-xs text-muted-foreground">
                                 1. Documents uploaded
@@ -169,118 +246,15 @@ function Index() {
                                     : `${completedRuns.length}/2 complete`}
                             </div>
                         </div>
-                        <div className="rounded-lg border p-3">
-                            <div className="text-xs text-muted-foreground">3. Compare models</div>
-                            <div className="mt-1 text-sm font-medium">
-                                {hasComparableRuns
-                                    ? 'Open comparison now'
-                                    : 'Needs two completed runs'}
-                            </div>
-                        </div>
                     </div>
                 </section>
 
-                {/* KPI Cards */}
-                {latestRun && (
-                    <div className="mt-6">
-                        <h2 className="mb-3 text-sm font-medium text-muted-foreground">
-                            Latest Evaluation: {latestRun.model_name} (Run #{latestRun.id})
-                        </h2>
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
-                            <KpiCard
-                                label="Faithfulness"
-                                value={formatScore(latestRun.avg_groundedness)}
-                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                            />
-                            <KpiCard
-                                label="Relevancy"
-                                value={formatScore(latestRun.avg_relevancy)}
-                                icon={<Target className="h-3.5 w-3.5" />}
-                            />
-                            <KpiCard
-                                label="Hallucination Rate"
-                                value={
-                                    latestRun.hallucination_rate != null
-                                        ? (latestRun.hallucination_rate * 100).toFixed(0) + '%'
-                                        : '--'
-                                }
-                                icon={<AlertTriangle className="h-3.5 w-3.5" />}
-                                color={
-                                    latestRun.hallucination_rate != null &&
-                                    latestRun.hallucination_rate > 0.3
-                                        ? 'text-rose-600 dark:text-rose-400'
-                                        : undefined
-                                }
-                            />
-                            <KpiCard
-                                label="Context Precision"
-                                value={formatScore(latestRun.avg_context_precision)}
-                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                            />
-                            <KpiCard
-                                label="Avg Latency"
-                                value={formatLatency(latestRun.avg_latency_ms)}
-                                icon={<Clock className="h-3.5 w-3.5" />}
-                            />
-                        </div>
-                    </div>
-                )}
-
-                {/* Latest Evaluation Runs */}
-                {completedRuns.length > 0 && (
-                    <div className="mt-6 rounded-xl border bg-card p-4">
-                        <div className="mb-3 flex items-center justify-between">
-                            <h2 className="text-lg font-semibold">Recent Evaluations</h2>
-                            <Link
-                                to="/evaluations"
-                                className="text-sm text-muted-foreground hover:text-foreground"
-                            >
-                                View all
-                            </Link>
-                        </div>
-                        <div className="space-y-2">
-                            {completedRuns.slice(0, 3).map((run) => (
-                                <Link
-                                    key={run.id}
-                                    to="/evaluations/$id"
-                                    params={{ id: String(run.id) }}
-                                    className="flex items-center justify-between rounded-lg border p-3 transition-colors hover:bg-accent"
-                                >
-                                    <div>
-                                        <span className="text-sm font-medium">
-                                            {run.model_name}
-                                        </span>
-                                        <span className="ml-2 text-xs text-muted-foreground">
-                                            Run #{run.id}
-                                            {run.created_at &&
-                                                ` -- ${new Date(run.created_at).toLocaleDateString()}`}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-4 text-xs">
-                                        <div className="text-center">
-                                            <div className="text-muted-foreground">Faith.</div>
-                                            <div className="font-medium">
-                                                {formatScore(run.avg_groundedness)}
-                                            </div>
-                                        </div>
-                                        <div className="text-center">
-                                            <div className="text-muted-foreground">Relev.</div>
-                                            <div className="font-medium">
-                                                {formatScore(run.avg_relevancy)}
-                                            </div>
-                                        </div>
-                                        <div className="text-center">
-                                            <div className="text-muted-foreground">Latency</div>
-                                            <div className="font-medium">
-                                                {formatLatency(run.avg_latency_ms)}
-                                            </div>
-                                        </div>
-                                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                                    </div>
-                                </Link>
-                            ))}
-                        </div>
-                    </div>
+                {/* Latest Comparison */}
+                {hasComparableRuns && latestComparablePair && (
+                    <LatestComparison
+                        runAId={latestComparablePair.runA}
+                        runBId={latestComparablePair.runB}
+                    />
                 )}
 
                 {/* Empty state */}

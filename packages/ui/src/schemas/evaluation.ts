@@ -28,6 +28,7 @@ export const EvalResultSchema = z.object({
 export const EvalRunSchema = z.object({
     id: z.number(),
     model_name: z.string(),
+    question_set_name: z.string().nullable().optional(),
     status: z.string(),
     total_questions: z.number(),
     completed_questions: z.number(),

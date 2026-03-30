@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -78,6 +79,20 @@ class Chunk(Base):
     document = relationship("Document", back_populates="chunks")
 
 
+class QuestionSet(Base):
+    """A reusable set of evaluation questions."""
+
+    __tablename__ = "question_set"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    questions = Column(JSONB, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<QuestionSet(id={self.id}, name='{self.name}', count={len(self.questions)})>"
+
+
 class EvalRun(Base):
     """A single evaluation run against a model using a set of test questions."""
 
@@ -85,6 +100,7 @@ class EvalRun(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_name = Column(String(200), nullable=False)
+    question_set_id = Column(Integer, ForeignKey("question_set.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(50), nullable=False, default="pending")
     total_questions = Column(Integer, nullable=False, default=0)
     completed_questions = Column(Integer, nullable=False, default=0)
@@ -99,6 +115,7 @@ class EvalRun(Base):
     created_at = Column(DateTime, server_default=func.now())
     completed_at = Column(DateTime, nullable=True)
 
+    question_set = relationship("QuestionSet", lazy="joined")
     results = relationship("EvalResult", back_populates="eval_run", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
