@@ -146,9 +146,22 @@ function UploadForm({ onUploaded }: { onUploaded: () => void }) {
             )}
 
             {uploadMutation.isSuccess && (
-                <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">
-                    {uploadMutation.data.message}
-                </p>
+                <div className="mt-3 space-y-2 text-sm">
+                    <p
+                        className={
+                            uploadMutation.data.embedding_error
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                        }
+                    >
+                        {uploadMutation.data.message}
+                    </p>
+                    {uploadMutation.data.embedding_error && (
+                        <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+                            {uploadMutation.data.embedding_error}
+                        </p>
+                    )}
+                </div>
             )}
 
             {uploadMutation.error && (

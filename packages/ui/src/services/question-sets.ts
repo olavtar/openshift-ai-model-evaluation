@@ -1,9 +1,16 @@
 // This project was developed with assistance from AI tools.
 
-import { QuestionSetSchema, type QuestionSet } from '../schemas/question-set';
+import {
+    QuestionSetSchema,
+    type QuestionSet,
+    type QuestionSetItem,
+} from '../schemas/question-set';
 import { z } from 'zod';
 
-export async function createQuestionSet(name: string, questions: string[]): Promise<QuestionSet> {
+export async function createQuestionSet(
+    name: string,
+    questions: QuestionSetItem[],
+): Promise<QuestionSet> {
     const response = await fetch('/api/question-sets/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

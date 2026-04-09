@@ -1,6 +1,8 @@
 # This project was developed with assistance from AI tools.
 """Tests for model serving endpoints (/models)."""
 
+from src.core.config import settings
+
 
 def test_list_models_returns_two(client):
     """Should return both Model A and Model B from config."""
@@ -10,8 +12,8 @@ def test_list_models_returns_two(client):
     data = response.json()
     assert len(data) == 2
     names = {m["name"] for m in data}
-    assert "granite-3.1-8b-instruct" in names
-    assert "llama-3.1-8b-instruct" in names
+    assert settings.MODEL_A_NAME in names
+    assert settings.MODEL_B_NAME in names
 
 
 def test_list_models_includes_required_fields(client):
@@ -34,7 +36,7 @@ def test_get_model_by_id(client):
 
     data = response.json()
     assert data["id"] == 1
-    assert data["name"] == "granite-3.1-8b-instruct"
+    assert data["name"] == settings.MODEL_A_NAME
 
 
 def test_get_model_not_found(client):
@@ -50,7 +52,7 @@ def test_model_status_returns_available(client):
 
     data = response.json()
     assert data["status"] == "available"
-    assert data["name"] == "granite-3.1-8b-instruct"
+    assert data["name"] == settings.MODEL_A_NAME
     assert "endpoint_url" in data
 
 

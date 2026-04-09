@@ -13,9 +13,11 @@ def _reset_settings():
     """Ensure settings are restored after each test."""
     from src.core.config import settings
 
-    original_token = settings.MODEL_API_TOKEN
+    original_token = settings.API_TOKEN
+    original_debug = settings.DEBUG
     yield
-    settings.MODEL_API_TOKEN = original_token
+    settings.API_TOKEN = original_token
+    settings.DEBUG = original_debug
 
 
 def test_build_context_block_formats_chunks():
@@ -35,12 +37,12 @@ def test_returns_error_when_no_token():
     """Should return a helpful message when no API token is configured."""
     from src.core.config import settings
 
-    settings.MODEL_API_TOKEN = ""
+    settings.API_TOKEN = ""
 
     import asyncio
 
     result = asyncio.run(generate_answer("What is X?", [], "granite-3.1-8b-instruct"))
-    assert "No MODEL_API_TOKEN" in result["answer"]
+    assert "No API token configured" in result["answer"]
     assert result["model"] == "granite-3.1-8b-instruct"
 
 
@@ -48,7 +50,7 @@ def test_returns_answer_on_success():
     """Should return the generated answer from the LLM."""
     from src.core.config import settings
 
-    settings.MODEL_API_TOKEN = "test-token"
+    settings.API_TOKEN = "test-token"
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -80,7 +82,7 @@ def test_returns_error_on_api_failure():
     """Should return error message when LLM API fails."""
     from src.core.config import settings
 
-    settings.MODEL_API_TOKEN = "test-token"
+    settings.API_TOKEN = "test-token"
 
     import asyncio
 
@@ -105,3 +107,37 @@ def test_returns_error_on_api_failure():
         )
 
     assert "error" in result["answer"].lower() or "500" in result["answer"]
+
+
+def test_http_error_includes_upstream_message_when_debug():
+    """When DEBUG is on, surface a short summary from the gateway error body."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.DEBUG = True
+
+    import asyncio
+
+    import httpx
+
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.text = '{"error":{"message":"model not found","type":"invalid_request"}}'
+    mock_response.json.return_value = {"error": {"message": "model not found", "type": "invalid_request"}}
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Server Error", request=MagicMock(), response=mock_response
+    )
+
+    with patch("src.services.generation.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = asyncio.run(
+            generate_answer("What?", [], "granite-3.1-8b-instruct")
+        )
+
+    assert "500" in result["answer"]
+    assert "model not found" in result["answer"]

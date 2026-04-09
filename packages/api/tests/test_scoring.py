@@ -10,7 +10,7 @@ import pytest
 def _no_api_token():
     """Ensure no API token is set."""
     with patch("src.services.scoring.settings") as mock_settings:
-        mock_settings.MODEL_API_TOKEN = ""
+        mock_settings.API_TOKEN = ""
         yield mock_settings
 
 
@@ -18,9 +18,12 @@ def _no_api_token():
 def _mock_settings():
     """Provide valid settings for scoring."""
     with patch("src.services.scoring.settings") as mock_settings:
-        mock_settings.MODEL_API_TOKEN = "test-token"
+        mock_settings.API_TOKEN = "test-token"
         mock_settings.MAAS_ENDPOINT = "https://maas.example.com"
         mock_settings.JUDGE_MODEL_NAME = "granite-3.1-8b-instruct"
+        mock_settings.MODEL_A_NAME = ""
+        mock_settings.MODEL_B_NAME = ""
+        mock_settings.resolved_judge_model_name = "granite-3.1-8b-instruct"
         yield mock_settings
 
 
@@ -34,6 +37,24 @@ async def test_score_result_skips_when_no_token(_no_api_token):
         answer="AI is artificial intelligence.",
         contexts=["AI stands for artificial intelligence."],
     )
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_score_result_skips_when_no_judge_model_name():
+    """Should return empty dict when token is set but no judge/chat model name."""
+    from src.services.scoring import score_result
+
+    with patch("src.services.scoring.settings") as mock_settings:
+        mock_settings.API_TOKEN = "test-token"
+        mock_settings.resolved_judge_model_name = ""
+
+        result = await score_result(
+            question="What is AI?",
+            answer="AI is artificial intelligence.",
+            contexts=["AI stands for artificial intelligence."],
+        )
+
     assert result == {}
 
 
@@ -54,6 +75,7 @@ async def test_score_result_returns_all_metrics(_mock_settings):
             question="What is AI?",
             answer="AI is artificial intelligence.",
             contexts=["AI stands for artificial intelligence."],
+            expected_answer="AI is artificial intelligence.",
         )
 
     assert result["groundedness_score"] == 0.85
@@ -110,6 +132,7 @@ async def test_score_result_handles_metric_failure(_mock_settings):
             question="What is AI?",
             answer="AI is artificial intelligence.",
             contexts=["AI stands for artificial intelligence."],
+            expected_answer="AI is artificial intelligence.",
         )
 
     assert result["groundedness_score"] is None
@@ -120,7 +143,31 @@ async def test_score_result_handles_metric_failure(_mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_maas_judge_model_get_model_name():
+async def test_score_result_without_expected_answer(_mock_settings):
+    """Should omit context_precision_score when no expected_answer is provided."""
+    from src.services.scoring import score_result
+
+    mock_metric = MagicMock()
+    mock_metric.score = 0.85
+    mock_metric.a_measure = AsyncMock()
+
+    with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
+         patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric):
+        result = await score_result(
+            question="What is AI?",
+            answer="AI is artificial intelligence.",
+            contexts=["AI stands for artificial intelligence."],
+        )
+
+    assert "groundedness_score" in result
+    assert "relevancy_score" in result
+    assert "context_relevancy_score" in result
+    assert "context_precision_score" not in result
+    assert result["is_hallucination"] is False
+
+
+def test_maas_judge_model_get_model_name():
     """MaaSJudgeModel should return the configured model name."""
     from src.services.scoring import MaaSJudgeModel
 
@@ -130,3 +177,35 @@ async def test_maas_judge_model_get_model_name():
         api_key="test-token",
     )
     assert judge.get_model_name() == "granite-3.1-8b-instruct"
+
+
+def test_resolved_judge_model_name_order():
+    """Judge model should prefer JUDGE_MODEL_NAME, then MODEL_A_NAME, then MODEL_B_NAME."""
+    from src.core.config import Settings
+
+    s = Settings(
+        JUDGE_MODEL_NAME="judge-m",
+        MODEL_A_NAME="model-a",
+        MODEL_B_NAME="model-b",
+        MAAS_ENDPOINT="https://x",
+        API_TOKEN="t",
+    )
+    assert s.resolved_judge_model_name == "judge-m"
+
+    s2 = Settings(
+        JUDGE_MODEL_NAME="",
+        MODEL_A_NAME="model-a",
+        MODEL_B_NAME="model-b",
+        MAAS_ENDPOINT="https://x",
+        API_TOKEN="t",
+    )
+    assert s2.resolved_judge_model_name == "model-a"
+
+    s3 = Settings(
+        JUDGE_MODEL_NAME="",
+        MODEL_A_NAME="",
+        MODEL_B_NAME="model-b",
+        MAAS_ENDPOINT="https://x",
+        API_TOKEN="t",
+    )
+    assert s3.resolved_judge_model_name == "model-b"

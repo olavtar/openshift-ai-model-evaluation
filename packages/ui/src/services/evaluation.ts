@@ -14,9 +14,14 @@ import {
 } from '../schemas/evaluation';
 import { z } from 'zod';
 
+export interface EvalQuestionInput {
+    question: string;
+    expected_answer?: string | null;
+}
+
 export async function createEvalRun(
     modelName: string,
-    questions: string[],
+    questions: EvalQuestionInput[],
     questionSetId?: number,
 ): Promise<EvalRunCreateResponse> {
     const response = await fetch('/api/evaluations/', {

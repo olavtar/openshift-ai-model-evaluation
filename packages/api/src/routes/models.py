@@ -26,14 +26,14 @@ def _build_models() -> list[dict]:
         {
             "id": 1,
             "name": settings.MODEL_A_NAME,
-            "endpoint_url": f"{settings.MAAS_ENDPOINT_A}/v1",
+            "endpoint_url": f"{settings.MAAS_ENDPOINT}/v1",
             "deployment_mode": settings.MODEL_A_DEPLOYMENT_MODE,
             "is_active": True,
         },
         {
             "id": 2,
             "name": settings.MODEL_B_NAME,
-            "endpoint_url": f"{settings.MAAS_ENDPOINT_B}/v1",
+            "endpoint_url": f"{settings.MAAS_ENDPOINT}/v1",
             "deployment_mode": settings.MODEL_B_DEPLOYMENT_MODE,
             "is_active": True,
         },

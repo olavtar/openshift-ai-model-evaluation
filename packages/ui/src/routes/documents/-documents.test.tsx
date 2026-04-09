@@ -69,6 +69,7 @@ describe('Documents hooks', () => {
             filename: 'new-doc.pdf',
             status: 'ready',
             message: 'Extracted 5 chunks from 2 pages (with embeddings)',
+            embedding_error: null,
         };
         vi.mocked(uploadDocument).mockResolvedValue(uploadResponse);
         vi.mocked(listDocuments).mockResolvedValue(mockDocuments);

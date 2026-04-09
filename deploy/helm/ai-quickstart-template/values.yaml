@@ -8,19 +8,19 @@ global:
 
 # Model serving configuration
 models:
-  # MaaS endpoint (RHOAI 3.x default - zero GPU required)
-  maasEndpoint: "https://maas.apps.prod.rhoai.rh-aiservices-bu.com"
+  # MaaS endpoint (shared for all models)
+  maasEndpoint: "https://litellm-litemaas.apps.prod.rhoai.rh-aiservices-bu.com"
   # Default models for A/B comparison
   modelA:
-    name: "granite-3.1-8b-instruct"
+    name: "Granite-3.3-8B-Instruct"
     deploymentMode: "maas"
   modelB:
-    name: "llama-3.1-8b-instruct"
+    name: "Llama-4-Scout-17B-16E-W4A16"
     deploymentMode: "maas"
   # Embedding model for RAG pipeline
-  embeddingModel: "nomic-embed-text-v1.5"
-  # Judge model for evaluation metrics (DeepEval)
-  judgeModel: "granite-3.1-8b-instruct"
+  embeddingModel: "Nomic-embed-text-v2-moe"
+  # Judge model for evaluation metrics (DeepEval) -- must be distinct from A and B
+  judgeModel: "Mistral-Small-24B-W8A8"
 
 # Secrets configuration - override with actual secrets
 secrets:
@@ -34,8 +34,8 @@ secrets:
   DEBUG: "false"
   ALLOWED_HOSTS: '["*"]'
 
-  # Model API tokens (MaaS authentication)
-  MODEL_API_TOKEN: ""
+  # API token (shared MaaS authentication)
+  API_TOKEN: ""
 
   # UI secrets
   VITE_API_BASE_URL: ""

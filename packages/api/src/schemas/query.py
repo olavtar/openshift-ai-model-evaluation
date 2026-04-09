@@ -3,6 +3,8 @@
 
 from pydantic import BaseModel, Field
 
+from ..core.config import settings
+
 
 class SourceChunk(BaseModel):
     """A retrieved context chunk returned with the answer."""
@@ -27,7 +29,7 @@ class QueryRequest(BaseModel):
 
     question: str = Field(..., min_length=1, max_length=2000)
     model_name: str = Field(
-        default="granite-3.1-8b-instruct",
+        default_factory=lambda: settings.MODEL_A_NAME,
         description="Name of the model to use for generation.",
     )
     top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve.")

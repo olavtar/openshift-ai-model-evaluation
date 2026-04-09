@@ -10,6 +10,31 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 GENERATION_TIMEOUT = 120.0  # seconds
+_DEBUG_ERROR_SNIPPET_LEN = 500
+
+
+def _summarize_upstream_error(response: httpx.Response) -> str:
+    """Best-effort extract a short message from an OpenAI-style error body."""
+    text = (response.text or "").strip()
+    try:
+        data = response.json()
+    except Exception:
+        return text[:_DEBUG_ERROR_SNIPPET_LEN] + ("..." if len(text) > _DEBUG_ERROR_SNIPPET_LEN else "")
+
+    err = data.get("error")
+    if isinstance(err, dict):
+        for key in ("message", "detail", "msg"):
+            val = err.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:_DEBUG_ERROR_SNIPPET_LEN]
+    if isinstance(err, str) and err.strip():
+        return err.strip()[:_DEBUG_ERROR_SNIPPET_LEN]
+
+    detail = data.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()[:_DEBUG_ERROR_SNIPPET_LEN]
+
+    return text[:_DEBUG_ERROR_SNIPPET_LEN] + ("..." if len(text) > _DEBUG_ERROR_SNIPPET_LEN else "")
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions based on the provided context. "
@@ -90,9 +115,18 @@ async def generate_answer(
         }
 
     except httpx.HTTPStatusError as e:
-        logger.error("Generation API returned status %s", e.response.status_code)
+        detail = _summarize_upstream_error(e.response)
+        logger.error(
+            "Generation API HTTP %s for model %r: %s",
+            e.response.status_code,
+            model_name,
+            detail or "(empty body)",
+        )
+        msg = f"Model {model_name} returned an error: {e.response.status_code}"
+        if settings.DEBUG and detail:
+            msg = f"{msg}. {detail}"
         return {
-            "answer": f"Model {model_name} returned an error: {e.response.status_code}",
+            "answer": msg,
             "model": model_name,
             "usage": None,
         }

@@ -18,6 +18,7 @@ export const DocumentUploadResponseSchema = z.object({
     filename: z.string(),
     status: z.string(),
     message: z.string(),
+    embedding_error: z.string().nullable().optional(),
 });
 
 export const DocumentStatusResponseSchema = z.object({

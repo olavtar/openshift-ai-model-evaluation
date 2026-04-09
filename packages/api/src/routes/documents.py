@@ -105,7 +105,8 @@ async def upload_document(
 
     # Generate embeddings (returns None if unavailable)
     chunk_texts = [c["text"] for c in all_chunks]
-    embeddings = await generate_embeddings(chunk_texts)
+    embed_out = await generate_embeddings(chunk_texts)
+    embeddings = embed_out.vectors
 
     db_chunks = []
     for i, chunk_data in enumerate(all_chunks):
@@ -138,6 +139,7 @@ async def upload_document(
         filename=doc_filename,
         status="ready",
         message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status})",
+        embedding_error=embed_out.error,
     )
 
 
