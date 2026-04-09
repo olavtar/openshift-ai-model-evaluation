@@ -1,8 +1,10 @@
 # This project was developed with assistance from AI tools.
 """Evaluation endpoints -- create, list, and inspect evaluation runs."""
 
+import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from db import EvalResult, EvalRun, get_db
@@ -43,6 +45,105 @@ COMPARISON_TIE_THRESHOLD = 0.05
 _cancelled_runs: set[int] = set()
 
 
+@dataclass
+class _QuestionResult:
+    """Result of processing a single evaluation question."""
+
+    question: str
+    answer: str | None = None
+    contexts_str: str | None = None
+    latency_ms: float = 0.0
+    tokens: int | None = None
+    scores: dict = field(default_factory=dict)
+    error: str | None = None
+    verdict: QuestionVerdict | None = None
+
+
+# Max questions to process concurrently. Limits pressure on the MaaS endpoint
+# while still providing significant speedup over sequential processing.
+_MAX_CONCURRENT_QUESTIONS = 3
+
+
+async def _process_question(
+    q_item: EvalQuestion,
+    model_name: str,
+    semaphore: asyncio.Semaphore,
+    eval_run_id: int,
+    profile: object | None,
+) -> _QuestionResult:
+    """Process a single question: retrieve, generate, score.
+
+    Runs under a semaphore to limit concurrency. Uses its own DB session
+    for retrieval (read-only) to avoid sharing sessions across coroutines.
+    """
+    from db.database import SessionLocal
+
+    question = q_item.question
+    expected_answer = q_item.expected_answer
+    result = _QuestionResult(question=question)
+
+    async with semaphore:
+        if eval_run_id in _cancelled_runs:
+            return result
+
+        start = time.time()
+        try:
+            # Each concurrent question gets its own session for retrieval
+            async with SessionLocal() as retrieval_session:
+                chunks = await retrieve_chunks(query=question, session=retrieval_session)
+
+            if eval_run_id in _cancelled_runs:
+                return result
+
+            gen_result = await generate_answer(
+                question=question,
+                chunks=chunks,
+                model_name=model_name,
+            )
+            result.latency_ms = (time.time() - start) * 1000
+            result.answer = gen_result["answer"]
+            result.tokens = (
+                gen_result.get("usage", {}).get("total_tokens")
+                if gen_result.get("usage")
+                else None
+            )
+
+            context_texts = [c["text"] for c in chunks] if chunks else []
+            # Format context with source metadata for UI display
+            if chunks:
+                context_parts = []
+                for c in chunks:
+                    header_parts = [c.get("source_document", "")]
+                    if c.get("page_number"):
+                        header_parts.append(f"p.{c['page_number']}")
+                    if c.get("section_path"):
+                        header_parts.append(c["section_path"])
+                    header = " | ".join(p for p in header_parts if p)
+                    context_parts.append(f"[{header}]\n{c['text']}")
+                result.contexts_str = "\n---\n".join(context_parts)
+
+            if eval_run_id in _cancelled_runs:
+                return result
+
+            if gen_result["answer"] and context_texts:
+                result.scores = await score_result(
+                    question=question,
+                    answer=gen_result["answer"],
+                    contexts=context_texts,
+                    expected_answer=expected_answer,
+                )
+
+            # Compute per-question verdict if profile is loaded
+            if profile and result.scores:
+                result.verdict = compute_question_verdict(result.scores, profile)
+
+        except Exception as e:
+            logger.error("Eval question failed: %s", e)
+            result.error = str(e)
+
+    return result
+
+
 async def _run_evaluation(
     eval_run_id: int,
     model_name: str,
@@ -51,9 +152,9 @@ async def _run_evaluation(
 ) -> None:
     """Execute an evaluation run in the background.
 
-    For each question: retrieve context, generate answer, score with DeepEval
-    metrics (faithfulness, relevancy, context precision, context relevancy,
-    completeness, correctness, compliance accuracy, abstention), record results.
+    Processes questions concurrently (up to _MAX_CONCURRENT_QUESTIONS at a time)
+    for retrieval, generation, and scoring. DB writes are batched sequentially
+    as results complete.
     """
     from db.database import SessionLocal
 
@@ -77,6 +178,15 @@ async def _run_evaluation(
                 logger.warning("Could not load profile '%s': %s", profile_id, e)
 
         try:
+            # Process all questions concurrently with a semaphore
+            semaphore = asyncio.Semaphore(_MAX_CONCURRENT_QUESTIONS)
+            tasks = [
+                _process_question(q_item, model_name, semaphore, eval_run_id, profile)
+                for q_item in questions
+            ]
+            question_results = await asyncio.gather(*tasks)
+
+            # Aggregate results sequentially (DB writes are not concurrent)
             total_latency = 0.0
             total_tokens_sum = 0
             completed = 0
@@ -92,63 +202,18 @@ async def _run_evaluation(
             hallucination_scored_count = 0
             question_verdicts: list[QuestionVerdict] = []
 
-            def _is_cancelled() -> bool:
-                return eval_run_id in _cancelled_runs
+            for qr in question_results:
+                if not qr.answer and not qr.error:
+                    # Skipped (e.g., cancelled before processing)
+                    continue
 
-            for q_item in questions:
-                if _is_cancelled():
-                    break
-
-                question = q_item.question
-                expected_answer = q_item.expected_answer
-
-                start = time.time()
-                try:
-                    chunks = await retrieve_chunks(query=question, session=session)
-
-                    if _is_cancelled():
-                        break
-
-                    result = await generate_answer(
-                        question=question,
-                        chunks=chunks,
-                        model_name=model_name,
+                if qr.error:
+                    eval_result = EvalResult(
+                        eval_run_id=eval_run_id,
+                        question=qr.question,
+                        error_message=qr.error,
                     )
-                    latency = (time.time() - start) * 1000
-                    tokens = (
-                        result.get("usage", {}).get("total_tokens")
-                        if result.get("usage")
-                        else None
-                    )
-
-                    context_texts = [c["text"] for c in chunks] if chunks else []
-                    # Format context with source metadata for UI display
-                    if chunks:
-                        context_parts = []
-                        for c in chunks:
-                            header_parts = [c.get("source_document", "")]
-                            if c.get("page_number"):
-                                header_parts.append(f"p.{c['page_number']}")
-                            if c.get("section_path"):
-                                header_parts.append(c["section_path"])
-                            header = " | ".join(p for p in header_parts if p)
-                            context_parts.append(f"[{header}]\n{c['text']}")
-                        contexts_str = "\n---\n".join(context_parts)
-                    else:
-                        contexts_str = None
-
-                    if _is_cancelled():
-                        break
-
-                    scores = {}
-                    if result["answer"] and context_texts:
-                        scores = await score_result(
-                            question=question,
-                            answer=result["answer"],
-                            contexts=context_texts,
-                            expected_answer=expected_answer,
-                        )
-
+                else:
                     eval_result = EvalResult(
                         eval_run_id=eval_run_id,
                         question=question,
@@ -168,55 +233,42 @@ async def _run_evaluation(
                         total_tokens=tokens,
                     )
 
-                    # Compute per-question verdict if profile is loaded
-                    if profile and scores:
-                        q_verdict = compute_question_verdict(scores, profile)
-                        eval_result.verdict = q_verdict.verdict
-                        eval_result.fail_reasons = q_verdict.fail_reasons
-                        question_verdicts.append(q_verdict)
+                    if qr.verdict:
+                        eval_result.verdict = qr.verdict.verdict
+                        eval_result.fail_reasons = qr.verdict.fail_reasons
+                        question_verdicts.append(qr.verdict)
 
-                    session.add(eval_result)
-
-                    total_latency += latency
-                    if tokens:
-                        total_tokens_sum += tokens
-                    if scores.get("relevancy_score") is not None:
-                        all_relevancy.append(scores["relevancy_score"])
-                    if scores.get("groundedness_score") is not None:
-                        all_groundedness.append(scores["groundedness_score"])
-                    if scores.get("context_precision_score") is not None:
-                        all_context_precision.append(scores["context_precision_score"])
-                    if scores.get("context_relevancy_score") is not None:
-                        all_context_relevancy.append(scores["context_relevancy_score"])
-                    if scores.get("completeness_score") is not None:
-                        all_completeness.append(scores["completeness_score"])
-                    if scores.get("correctness_score") is not None:
-                        all_correctness.append(scores["correctness_score"])
-                    if scores.get("compliance_accuracy_score") is not None:
-                        all_compliance_accuracy.append(scores["compliance_accuracy_score"])
-                    if scores.get("abstention_score") is not None:
-                        all_abstention.append(scores["abstention_score"])
-                    if scores.get("is_hallucination") is not None:
+                    total_latency += qr.latency_ms
+                    if qr.tokens:
+                        total_tokens_sum += qr.tokens
+                    if qr.scores.get("relevancy_score") is not None:
+                        all_relevancy.append(qr.scores["relevancy_score"])
+                    if qr.scores.get("groundedness_score") is not None:
+                        all_groundedness.append(qr.scores["groundedness_score"])
+                    if qr.scores.get("context_precision_score") is not None:
+                        all_context_precision.append(qr.scores["context_precision_score"])
+                    if qr.scores.get("context_relevancy_score") is not None:
+                        all_context_relevancy.append(qr.scores["context_relevancy_score"])
+                    if qr.scores.get("completeness_score") is not None:
+                        all_completeness.append(qr.scores["completeness_score"])
+                    if qr.scores.get("correctness_score") is not None:
+                        all_correctness.append(qr.scores["correctness_score"])
+                    if qr.scores.get("compliance_accuracy_score") is not None:
+                        all_compliance_accuracy.append(qr.scores["compliance_accuracy_score"])
+                    if qr.scores.get("abstention_score") is not None:
+                        all_abstention.append(qr.scores["abstention_score"])
+                    if qr.scores.get("is_hallucination") is not None:
                         hallucination_scored_count += 1
-                        if scores["is_hallucination"]:
+                        if qr.scores["is_hallucination"]:
                             hallucination_count += 1
-                    completed += 1
 
-                except Exception as e:
-                    logger.error("Eval question failed: %s", e)
-                    eval_result = EvalResult(
-                        eval_run_id=eval_run_id,
-                        question=question,
-                        error_message=str(e),
-                    )
-                    session.add(eval_result)
-                    completed += 1
-
+                session.add(eval_result)
+                completed += 1
                 run.completed_questions = completed
                 await session.commit()
 
             # Set final status
-            if _is_cancelled():
+            if eval_run_id in _cancelled_runs:
                 _cancelled_runs.discard(eval_run_id)
                 run.status = "cancelled"
                 run.completed_at = datetime.now(UTC).replace(tzinfo=None)

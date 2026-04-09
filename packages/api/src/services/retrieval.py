@@ -17,7 +17,7 @@ from .embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
 
-TOP_K = 10  # default number of chunks to retrieve
+TOP_K = 5  # default number of chunks to retrieve
 
 
 async def retrieve_chunks(

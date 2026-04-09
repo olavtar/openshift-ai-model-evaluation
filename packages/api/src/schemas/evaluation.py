@@ -134,7 +134,7 @@ class SynthesizeRequest(BaseModel):
     document_ids: list[int] | None = Field(
         default=None, description="Document IDs to generate from. None = all documents."
     )
-    max_questions: int = Field(default=10, ge=1, le=50)
+    max_questions: int = Field(default=3, ge=1, le=50)
 
 
 class SynthesizedQuestion(BaseModel):
