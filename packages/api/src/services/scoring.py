@@ -12,6 +12,7 @@ live exclusively in the verdict layer (verdicts.py) using profile
 thresholds.
 """
 
+import asyncio
 import logging
 
 from deepeval.metrics import (
@@ -257,13 +258,18 @@ async def score_result(
             ("compliance_accuracy_score", _compliance_accuracy_metric(judge)),
         ])
 
-    for name, metric in metrics:
+    # Run all metrics concurrently -- each is an independent LLM judge call
+    async def _measure(name: str, metric):
         try:
             await metric.a_measure(test_case)
-            scores[name] = metric.score
+            return name, metric.score
         except Exception as e:
             logger.error("Scoring failed for %s: %s", name, e, exc_info=True)
-            scores[name] = None
+            return name, None
+
+    results = await asyncio.gather(*[_measure(name, metric) for name, metric in metrics])
+    for name, score in results:
+        scores[name] = score
 
     groundedness = scores.get("groundedness_score")
     if groundedness is not None:

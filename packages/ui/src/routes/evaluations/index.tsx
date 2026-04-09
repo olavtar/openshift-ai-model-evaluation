@@ -175,7 +175,7 @@ function NewEvalForm({
 
     const handleSynthesize = () => {
         synthesizeMutation.mutate(
-            { maxQuestions: 5 },
+            { maxQuestions: 3 },
             {
                 onSuccess: (data) => {
                     const generated: EvalQuestionInput[] = data.questions.map((q) => ({
