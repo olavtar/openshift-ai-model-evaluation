@@ -169,7 +169,7 @@ def test_compare_two_runs(client):
     data = response.json()
     assert data["run_a"]["id"] == id_a
     assert data["run_b"]["id"] == id_b
-    assert len(data["metrics"]) == 6
+    assert len(data["metrics"]) == 10
     assert data["metrics"][0]["metric"] == "groundedness"
 
 

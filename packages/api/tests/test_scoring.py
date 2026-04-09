@@ -60,7 +60,7 @@ async def test_score_result_skips_when_no_judge_model_name():
 
 @pytest.mark.asyncio
 async def test_score_result_returns_all_metrics(_mock_settings):
-    """Should return all metric scores when scoring succeeds."""
+    """Should return all metric scores when scoring succeeds with expected_answer."""
     from src.services.scoring import score_result
 
     mock_metric = MagicMock()
@@ -70,7 +70,11 @@ async def test_score_result_returns_all_metrics(_mock_settings):
     with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
          patch("src.services.scoring.ContextualPrecisionMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric):
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
+         patch("src.services.scoring._abstention_metric", return_value=mock_metric), \
+         patch("src.services.scoring._completeness_metric", return_value=mock_metric), \
+         patch("src.services.scoring._correctness_metric", return_value=mock_metric), \
+         patch("src.services.scoring._compliance_accuracy_metric", return_value=mock_metric):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -82,6 +86,10 @@ async def test_score_result_returns_all_metrics(_mock_settings):
     assert result["relevancy_score"] == 0.85
     assert result["context_precision_score"] == 0.85
     assert result["context_relevancy_score"] == 0.85
+    assert result["abstention_score"] == 0.85
+    assert result["completeness_score"] == 0.85
+    assert result["correctness_score"] == 0.85
+    assert result["compliance_accuracy_score"] == 0.85
     assert result["is_hallucination"] is False
 
 
@@ -100,8 +108,8 @@ async def test_score_result_detects_hallucination(_mock_settings):
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=low_score_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=high_score_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=high_score_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=high_score_metric):
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=high_score_metric), \
+         patch("src.services.scoring._abstention_metric", return_value=high_score_metric):
         result = await score_result(
             question="What is the capital requirement?",
             answer="Banks need 50% capital reserves.",
@@ -127,7 +135,11 @@ async def test_score_result_handles_metric_failure(_mock_settings):
     with patch("src.services.scoring.FaithfulnessMetric", return_value=failing_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=ok_metric), \
          patch("src.services.scoring.ContextualPrecisionMetric", return_value=ok_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=ok_metric):
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=ok_metric), \
+         patch("src.services.scoring._abstention_metric", return_value=ok_metric), \
+         patch("src.services.scoring._completeness_metric", return_value=ok_metric), \
+         patch("src.services.scoring._correctness_metric", return_value=ok_metric), \
+         patch("src.services.scoring._compliance_accuracy_metric", return_value=ok_metric):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -139,6 +151,8 @@ async def test_score_result_handles_metric_failure(_mock_settings):
     assert result["relevancy_score"] == 0.9
     assert result["context_precision_score"] == 0.9
     assert result["context_relevancy_score"] == 0.9
+    assert result["abstention_score"] == 0.9
+    assert result["completeness_score"] == 0.9
     assert result["is_hallucination"] is None
 
 
@@ -153,7 +167,8 @@ async def test_score_result_without_expected_answer(_mock_settings):
 
     with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
          patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric):
+         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
+         patch("src.services.scoring._abstention_metric", return_value=mock_metric):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -163,7 +178,11 @@ async def test_score_result_without_expected_answer(_mock_settings):
     assert "groundedness_score" in result
     assert "relevancy_score" in result
     assert "context_relevancy_score" in result
+    assert "abstention_score" in result
     assert "context_precision_score" not in result
+    assert "completeness_score" not in result
+    assert "correctness_score" not in result
+    assert "compliance_accuracy_score" not in result
     assert result["is_hallucination"] is False
 
 
