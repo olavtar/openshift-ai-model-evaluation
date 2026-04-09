@@ -70,6 +70,66 @@ function VerdictBadge({ verdict }: { verdict: string }) {
     );
 }
 
+interface ParsedChunk {
+    document: string;
+    page: string | null;
+    section: string | null;
+    text: string;
+}
+
+function parseContextChunks(contexts: string): ParsedChunk[] {
+    const raw = contexts.split('\n---\n');
+    return raw.map((block) => {
+        const lines = block.trim().split('\n');
+        let document = '';
+        let page: string | null = null;
+        let section: string | null = null;
+        let textStart = 0;
+
+        // Parse header line like [doc.pdf | p.5 | Section Name]
+        if (lines[0]?.startsWith('[') && lines[0]?.includes(']')) {
+            const headerEnd = lines[0].indexOf(']');
+            const header = lines[0].slice(1, headerEnd);
+            const parts = header.split('|').map((p) => p.trim());
+            document = parts[0] ?? '';
+            for (let i = 1; i < parts.length; i++) {
+                if (parts[i].startsWith('p.')) {
+                    page = parts[i];
+                } else {
+                    section = parts[i];
+                }
+            }
+            textStart = 1;
+        }
+
+        const text = lines.slice(textStart).join('\n').trim();
+        return { document, page, section, text };
+    }).filter((c) => c.text.length > 0);
+}
+
+function ChunkCard({ chunk, index }: { chunk: ParsedChunk; index: number }) {
+    return (
+        <div className="rounded-lg border bg-card p-4">
+            <div className="mb-2 flex items-start justify-between">
+                <div>
+                    <div className="flex items-center gap-2">
+                        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium">
+                            #{index + 1}
+                        </span>
+                        <span className="text-sm font-semibold">{chunk.document || 'Unknown document'}</span>
+                    </div>
+                    {(chunk.page || chunk.section) && (
+                        <div className="mt-0.5 pl-8 text-xs text-muted-foreground">
+                            {[chunk.page, chunk.section].filter(Boolean).join(' \u00b7 ')}
+                        </div>
+                    )}
+                </div>
+            </div>
+            <p className="pl-8 text-sm">{chunk.text}</p>
+        </div>
+    );
+}
+
 function ResultRow({ result }: { result: EvalResult }) {
     const [expanded, setExpanded] = useState(false);
 
@@ -106,13 +166,22 @@ function ResultRow({ result }: { result: EvalResult }) {
             </button>
 
             {expanded && (
-                <div className="border-t px-4 pb-4 pt-3">
+                <div className="border-t px-4 pb-4 pt-3 space-y-4">
+                    {result.expected_answer && (
+                        <div className="rounded-lg bg-muted/40 p-4">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Expected answer
+                            </span>
+                            <p className="mt-1 text-sm">{result.expected_answer}</p>
+                        </div>
+                    )}
+
                     {result.answer && (
-                        <div className="mb-3">
-                            <div className="mb-1 text-xs font-medium text-muted-foreground">
-                                Answer
-                            </div>
-                            <p className="text-sm">{result.answer}</p>
+                        <div className="rounded-lg bg-muted/40 p-4">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Model answer
+                            </span>
+                            <p className="mt-1 text-sm">{result.answer}</p>
                         </div>
                     )}
 
@@ -156,13 +225,16 @@ function ResultRow({ result }: { result: EvalResult }) {
                     </div>
 
                     {result.contexts && (
-                        <div className="mt-3">
-                            <div className="mb-1 text-xs font-medium text-muted-foreground">
-                                Retrieved Context
+                        <div>
+                            <h3 className="mb-1 text-sm font-semibold">Retrieved chunks</h3>
+                            <p className="mb-3 text-xs text-muted-foreground">
+                                Document, page, section, and snippet for each retrieved chunk.
+                            </p>
+                            <div className="space-y-3">
+                                {parseContextChunks(result.contexts).map((chunk, i) => (
+                                    <ChunkCard key={i} chunk={chunk} index={i} />
+                                ))}
                             </div>
-                            <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs">
-                                {result.contexts}
-                            </pre>
                         </div>
                     )}
                 </div>

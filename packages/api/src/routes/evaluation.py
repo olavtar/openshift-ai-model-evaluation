@@ -152,6 +152,7 @@ async def _run_evaluation(
                     eval_result = EvalResult(
                         eval_run_id=eval_run_id,
                         question=question,
+                        expected_answer=expected_answer,
                         answer=result["answer"],
                         contexts=contexts_str,
                         latency_ms=latency,
@@ -482,6 +483,7 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
     return EvalResultResponse(
         id=r.id,
         question=r.question,
+        expected_answer=r.expected_answer,
         answer=r.answer,
         contexts=r.contexts,
         latency_ms=r.latency_ms,
@@ -577,18 +579,36 @@ async def compare_eval_runs(
     a_by_question = {r.question: r for r in results_a.scalars().all()}
     b_by_question = {r.question: r for r in results_b.scalars().all()}
 
+    # Build expected_answer lookup from question sets (fallback for old results)
+    expected_by_question: dict[str, str] = {}
+    for run in (run_a, run_b):
+        if run.question_set and run.question_set.questions:
+            for q_item in run.question_set.questions:
+                if isinstance(q_item, dict) and q_item.get("expected_answer"):
+                    expected_by_question.setdefault(q_item["question"], q_item["expected_answer"])
+
     all_questions = list(
         dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys()))
     )
 
-    questions = [
-        QuestionComparison(
-            question=q,
-            run_a=_build_result_response(a_by_question[q]) if q in a_by_question else None,
-            run_b=_build_result_response(b_by_question[q]) if q in b_by_question else None,
+    questions = []
+    for q in all_questions:
+        r_a = a_by_question.get(q)
+        r_b = b_by_question.get(q)
+        # Prefer expected_answer from eval result, fall back to question set
+        expected = (
+            (r_a.expected_answer if r_a else None)
+            or (r_b.expected_answer if r_b else None)
+            or expected_by_question.get(q)
         )
-        for q in all_questions
-    ]
+        questions.append(
+            QuestionComparison(
+                question=q,
+                expected_answer=expected,
+                run_a=_build_result_response(r_a) if r_a else None,
+                run_b=_build_result_response(r_b) if r_b else None,
+            )
+        )
 
     return ComparisonResponse(
         run_a=_build_run_response(run_a),
@@ -615,10 +635,24 @@ async def get_eval_run(
     )
     result_rows = results.scalars().all()
 
+    # Backfill expected_answer from question set for old results
+    expected_by_question: dict[str, str] = {}
+    if run.question_set and run.question_set.questions:
+        for q_item in run.question_set.questions:
+            if isinstance(q_item, dict) and q_item.get("expected_answer"):
+                expected_by_question.setdefault(q_item["question"], q_item["expected_answer"])
+
+    result_responses = []
+    for r in result_rows:
+        resp = _build_result_response(r)
+        if not resp.expected_answer and r.question in expected_by_question:
+            resp.expected_answer = expected_by_question[r.question]
+        result_responses.append(resp)
+
     base_response = _build_run_response(run)
     return EvalRunDetailResponse(
         **base_response.model_dump(),
-        results=[_build_result_response(r) for r in result_rows],
+        results=result_responses,
     )
 
 
@@ -640,11 +674,14 @@ async def rerun_eval(
         raise HTTPException(status_code=404, detail="Evaluation run not found")
 
     results = await session.execute(
-        select(EvalResult.question)
+        select(EvalResult.question, EvalResult.expected_answer)
         .where(EvalResult.eval_run_id == eval_run_id)
         .order_by(EvalResult.id)
     )
-    questions = [EvalQuestion(question=row[0]) for row in results.all()]
+    questions = [
+        EvalQuestion(question=row[0], expected_answer=row[1])
+        for row in results.all()
+    ]
     if not questions:
         raise HTTPException(
             status_code=400, detail="Original run has no questions to re-run"

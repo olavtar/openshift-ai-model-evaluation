@@ -13,6 +13,7 @@ export const EvalRunCreateResponseSchema = z.object({
 export const EvalResultSchema = z.object({
     id: z.number(),
     question: z.string(),
+    expected_answer: z.string().nullable().optional(),
     answer: z.string().nullable().optional(),
     contexts: z.string().nullable().optional(),
     latency_ms: z.number().nullable().optional(),
@@ -72,6 +73,7 @@ export const ComparisonMetricSchema = z.object({
 
 export const QuestionComparisonSchema = z.object({
     question: z.string(),
+    expected_answer: z.string().nullable().optional(),
     run_a: EvalResultSchema.nullable().optional(),
     run_b: EvalResultSchema.nullable().optional(),
 });

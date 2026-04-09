@@ -177,17 +177,14 @@ function Index() {
                             side by side.
                         </p>
                         <div className="mt-2 flex gap-3">
-                            {hasComparableRuns && latestComparablePair ? (
+                            {hasComparableRuns ? (
                                 <Link
                                     to="/evaluations/compare"
-                                    search={{
-                                        run_a: latestComparablePair.runA,
-                                        run_b: latestComparablePair.runB,
-                                    }}
+                                    search={{ run_a: 0, run_b: 0 }}
                                     className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                                 >
                                     <GitCompareArrows className="h-4 w-4" />
-                                    Compare Latest Runs
+                                    Compare Evaluations
                                 </Link>
                             ) : hasDocuments ? (
                                 <Link

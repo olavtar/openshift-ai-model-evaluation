@@ -28,6 +28,7 @@ class EvalResultResponse(BaseModel):
 
     id: int
     question: str
+    expected_answer: str | None = None
     answer: str | None = None
     contexts: str | None = None
     latency_ms: float | None = None
@@ -113,6 +114,7 @@ class QuestionComparison(BaseModel):
     """Side-by-side comparison of a single question across two runs."""
 
     question: str
+    expected_answer: str | None = None
     run_a: EvalResultResponse | None = None
     run_b: EvalResultResponse | None = None
 
