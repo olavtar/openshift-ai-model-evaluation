@@ -14,6 +14,7 @@ from ..core.config import settings
 from ..schemas.evaluation import (
     ComparisonMetric,
     ComparisonResponse,
+    EvalQuestion,
     EvalResultResponse,
     EvalRunCreate,
     EvalRunCreateResponse,
@@ -40,7 +41,11 @@ COMPARISON_TIE_THRESHOLD = 0.05
 _cancelled_runs: set[int] = set()
 
 
-async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str]) -> None:
+async def _run_evaluation(
+    eval_run_id: int,
+    model_name: str,
+    questions: list[EvalQuestion],
+) -> None:
     """Execute an evaluation run in the background.
 
     For each question: retrieve context, generate answer, score with DeepEval
@@ -71,9 +76,12 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
             def _is_cancelled() -> bool:
                 return eval_run_id in _cancelled_runs
 
-            for question in questions:
+            for q_item in questions:
                 if _is_cancelled():
                     break
+
+                question = q_item.question
+                expected_answer = q_item.expected_answer
 
                 start = time.time()
                 try:
@@ -102,6 +110,7 @@ async def _run_evaluation(eval_run_id: int, model_name: str, questions: list[str
                             question=question,
                             answer=result["answer"],
                             contexts=context_texts,
+                            expected_answer=expected_answer,
                         )
 
                     eval_result = EvalResult(
@@ -201,11 +210,19 @@ async def create_eval_run(
     Queues the evaluation to run in the background. Each question is
     sent through the RAG pipeline using the specified model.
     """
+    # Normalize questions: accept both plain strings and {question, expected_answer} objects
+    normalized: list[EvalQuestion] = []
+    for q in request.questions:
+        if isinstance(q, str):
+            normalized.append(EvalQuestion(question=q))
+        else:
+            normalized.append(q)
+
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=request.question_set_id,
         status="pending",
-        total_questions=len(request.questions),
+        total_questions=len(normalized),
     )
     session.add(run)
     await session.flush()
@@ -220,7 +237,7 @@ async def create_eval_run(
         _run_evaluation,
         eval_run_id=run_id,
         model_name=request.model_name,
-        questions=request.questions,
+        questions=normalized,
     )
 
     await session.commit()
@@ -229,6 +246,11 @@ async def create_eval_run(
     model_cfg = settings.get_model_config(request.model_name)
     if not model_cfg["token"]:
         message += f". Warning: No API token configured for {request.model_name}."
+    elif not settings.resolved_judge_model_name:
+        message += (
+            ". Warning: No judge model name (JUDGE_MODEL_NAME or MODEL_A_NAME); "
+            "faithfulness and related metrics will be skipped."
+        )
 
     return EvalRunCreateResponse(
         eval_run_id=run_id,
@@ -302,13 +324,21 @@ async def synthesize_questions(
 ) -> SynthesizeResponse:
     """Auto-generate evaluation questions from ingested documents.
 
-    Uses DeepEval's Synthesizer to create question/expected-answer pairs
-    from document chunks. Optionally filter by specific document IDs.
+    Calls the shared MaaS chat endpoint (same path as RAG) with
+    ``question_synthesis_model_name``. Optionally filter by document IDs.
     """
-    if not settings.judge_token:
+    if not settings.API_TOKEN:
         raise HTTPException(
             status_code=400,
-            detail="No API token configured for the judge model. Set it to enable question generation.",
+            detail="No API token configured. Set API_TOKEN to enable question generation.",
+        )
+    if not settings.question_synthesis_model_name:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No model configured for question synthesis. Set MODEL_A_NAME, "
+                "JUDGE_MODEL_NAME, or QUESTION_SYNTHESIS_MODEL_NAME."
+            ),
         )
 
     try:
@@ -507,7 +537,7 @@ async def rerun_eval(
         .where(EvalResult.eval_run_id == eval_run_id)
         .order_by(EvalResult.id)
     )
-    questions = [row[0] for row in results.all()]
+    questions = [EvalQuestion(question=row[0]) for row in results.all()]
     if not questions:
         raise HTTPException(
             status_code=400, detail="Original run has no questions to re-run"

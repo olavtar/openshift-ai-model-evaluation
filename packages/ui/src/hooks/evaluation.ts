@@ -10,6 +10,7 @@ import {
     rerunEval,
     compareEvalRuns,
     synthesizeQuestions,
+    type EvalQuestionInput,
 } from '../services/evaluation';
 import type { EvalRun } from '../schemas/evaluation';
 
@@ -45,7 +46,7 @@ export function useCreateEvalRun() {
             questionSetId,
         }: {
             modelName: string;
-            questions: string[];
+            questions: EvalQuestionInput[];
             questionSetId?: number;
         }) => createEvalRun(modelName, questions, questionSetId),
         onSuccess: () => {

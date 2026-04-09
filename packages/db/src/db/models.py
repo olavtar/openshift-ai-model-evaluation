@@ -4,12 +4,14 @@
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     func,
@@ -73,7 +75,10 @@ class Chunk(Base):
     section_path = Column(Text, nullable=True)
     element_type = Column(String(50), nullable=False, default="paragraph")
     token_count = Column(Integer, nullable=False, default=0)
-    embedding = Column(Vector(EMBEDDING_DIMENSION), nullable=True)
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION).with_variant(LargeBinary, "sqlite"),
+        nullable=True,
+    )
     created_at = Column(DateTime, server_default=func.now())
 
     document = relationship("Document", back_populates="chunks")
@@ -86,7 +91,7 @@ class QuestionSet(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False)
-    questions = Column(JSONB, nullable=False)
+    questions = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
     def __repr__(self) -> str:

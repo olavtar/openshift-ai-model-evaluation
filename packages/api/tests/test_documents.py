@@ -2,7 +2,9 @@
 """Tests for document management endpoints (/documents)."""
 
 import io
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from src.services.embedding import EmbeddingsResult
 
 # --- Helpers ---
 
@@ -30,7 +32,8 @@ def _mock_no_embeddings():
     """Return a patch that skips embedding generation."""
     return patch(
         "src.routes.documents.generate_embeddings",
-        return_value=None,
+        new_callable=AsyncMock,
+        return_value=EmbeddingsResult(vectors=None, error=None),
     )
 
 

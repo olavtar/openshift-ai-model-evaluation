@@ -32,7 +32,7 @@ async def query(
     if not settings.any_token_configured:
         raise HTTPException(
             status_code=400,
-            detail="No API tokens configured. Set MODEL_A_API_TOKEN and MODEL_B_API_TOKEN in your environment.",
+            detail="No API token configured. Set API_TOKEN in your environment.",
         )
 
     # Validate model_name

@@ -27,6 +27,7 @@ import {
     XCircle,
 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
+import type { EvalQuestionInput } from '../../services/evaluation';
 import { formatScore, formatLatency } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
 
@@ -143,7 +144,7 @@ function NewEvalForm({
 }: {
     onCreated: () => void;
     onCancel: () => void;
-    initialQuestions?: string[];
+    initialQuestions?: EvalQuestionInput[];
     initialQuestionSetId?: number;
 }) {
     const { data: models } = useModels();
@@ -151,8 +152,9 @@ function NewEvalForm({
     const createMutation = useCreateEvalRun();
     const synthesizeMutation = useSynthesizeQuestions();
     const saveSetMutation = useCreateQuestionSet();
+    const deleteSetMutation = useDeleteQuestionSet();
     const [selectedModel, setSelectedModel] = useState('');
-    const [questions, setQuestions] = useState<string[]>(initialQuestions ?? []);
+    const [questions, setQuestions] = useState<EvalQuestionInput[]>(initialQuestions ?? []);
     const [newQuestion, setNewQuestion] = useState('');
     const [warningMessage, setWarningMessage] = useState('');
     const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
@@ -161,8 +163,8 @@ function NewEvalForm({
 
     const addQuestion = () => {
         const trimmed = newQuestion.trim();
-        if (trimmed && !questions.includes(trimmed)) {
-            setQuestions([...questions, trimmed]);
+        if (trimmed && !questions.some((q) => q.question === trimmed)) {
+            setQuestions([...questions, { question: trimmed }]);
             setNewQuestion('');
         }
     };
@@ -173,11 +175,16 @@ function NewEvalForm({
 
     const handleSynthesize = () => {
         synthesizeMutation.mutate(
-            { maxQuestions: 10 },
+            { maxQuestions: 5 },
             {
                 onSuccess: (data) => {
-                    const generated = data.questions.map((q) => q.question);
-                    const unique = generated.filter((q) => !questions.includes(q));
+                    const generated: EvalQuestionInput[] = data.questions.map((q) => ({
+                        question: q.question,
+                        expected_answer: q.expected_answer,
+                    }));
+                    const unique = generated.filter(
+                        (g) => !questions.some((q) => q.question === g.question),
+                    );
                     setQuestions([...questions, ...unique]);
                 },
             },
@@ -225,9 +232,30 @@ function NewEvalForm({
 
             <div className="mb-4">
                 <div className="mb-1.5 flex items-center justify-between">
-                    <label className="text-xs font-medium text-muted-foreground">
-                        Questions ({questions.length})
-                    </label>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-muted-foreground">
+                            Questions ({questions.length})
+                        </label>
+                        {loadedSetId && (
+                            <button
+                                onClick={() => {
+                                    const setName = questionSets?.find((s) => s.id === loadedSetId)?.name;
+                                    if (window.confirm(`Delete question set "${setName}"?`)) {
+                                        deleteSetMutation.mutate(loadedSetId, {
+                                            onSuccess: () => {
+                                                setLoadedSetId(undefined);
+                                            },
+                                        });
+                                    }
+                                }}
+                                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                title="Delete loaded question set"
+                            >
+                                <Trash2 className="h-3 w-3" />
+                                Delete set
+                            </button>
+                        )}
+                    </div>
                     <div className="flex items-center gap-2">
                         {questionSets && questionSets.length > 0 && (
                             <select
@@ -236,7 +264,10 @@ function NewEvalForm({
                                         (s) => s.id === Number(e.target.value),
                                     );
                                     if (set) {
-                                        setQuestions(set.questions);
+                                        setQuestions(set.questions.map((q) => ({
+                                            question: q.question,
+                                            expected_answer: q.expected_answer,
+                                        })));
                                         setLoadedSetId(set.id);
                                     }
                                     e.target.value = '';
@@ -260,24 +291,58 @@ function NewEvalForm({
                     {questions.map((q, i) => (
                         <div
                             key={i}
-                            className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                            className="rounded-lg border bg-background px-3 py-2 text-sm"
                         >
-                            <input
-                                type="text"
-                                value={q}
-                                onChange={(e) => {
-                                    const updated = [...questions];
-                                    updated[i] = e.target.value;
-                                    setQuestions(updated);
-                                }}
-                                className="flex-1 bg-transparent outline-none"
-                            />
-                            <button
-                                onClick={() => removeQuestion(i)}
-                                className="text-muted-foreground hover:text-destructive"
-                            >
-                                <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={q.question}
+                                    onChange={(e) => {
+                                        const updated = [...questions];
+                                        updated[i] = { ...updated[i], question: e.target.value };
+                                        setQuestions(updated);
+                                    }}
+                                    className="flex-1 bg-transparent outline-none"
+                                    placeholder="Question"
+                                />
+                                <button
+                                    onClick={() => {
+                                        const updated = [...questions];
+                                        updated[i] = {
+                                            ...updated[i],
+                                            expected_answer: updated[i].expected_answer === undefined ? '' : undefined,
+                                        };
+                                        setQuestions(updated);
+                                    }}
+                                    className={`shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors ${
+                                        q.expected_answer !== undefined
+                                            ? 'bg-primary/10 text-primary'
+                                            : 'text-muted-foreground hover:bg-accent'
+                                    }`}
+                                    title="Toggle expected answer"
+                                >
+                                    Expected answer
+                                </button>
+                                <button
+                                    onClick={() => removeQuestion(i)}
+                                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                            {q.expected_answer !== undefined && (
+                                <textarea
+                                    value={q.expected_answer ?? ''}
+                                    onChange={(e) => {
+                                        const updated = [...questions];
+                                        updated[i] = { ...updated[i], expected_answer: e.target.value || null };
+                                        setQuestions(updated);
+                                    }}
+                                    placeholder="Expected answer (enables context precision scoring)"
+                                    className="mt-1.5 w-full resize-none rounded border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus:border-primary/50"
+                                    rows={2}
+                                />
+                            )}
                         </div>
                     ))}
                 </div>
@@ -336,7 +401,8 @@ function NewEvalForm({
                                     saveSetMutation.mutate(
                                         { name: saveSetName.trim(), questions },
                                         {
-                                            onSuccess: () => {
+                                            onSuccess: (data) => {
+                                                setLoadedSetId(data.id);
                                                 setSaveSetName('');
                                                 setShowSaveSet(false);
                                             },
@@ -354,7 +420,8 @@ function NewEvalForm({
                                 saveSetMutation.mutate(
                                     { name: saveSetName.trim(), questions },
                                     {
-                                        onSuccess: () => {
+                                        onSuccess: (data) => {
+                                            setLoadedSetId(data.id);
                                             setSaveSetName('');
                                             setShowSaveSet(false);
                                         },
@@ -486,7 +553,7 @@ function CompareSelector({ runs }: { runs: EvalRun[] }) {
 function QuestionSetsPanel({
     onLoad,
 }: {
-    onLoad: (questions: string[], setId: number) => void;
+    onLoad: (questions: EvalQuestionInput[], setId: number) => void;
 }) {
     const { data: sets } = useQuestionSets();
     const deleteMutation = useDeleteQuestionSet();
@@ -506,7 +573,10 @@ function QuestionSetsPanel({
                         className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 transition-colors hover:bg-accent"
                     >
                         <button
-                            onClick={() => onLoad(s.questions, s.id)}
+                            onClick={() => onLoad(s.questions.map((q) => ({
+                                question: q.question,
+                                expected_answer: q.expected_answer,
+                            })), s.id)}
                             className="flex flex-1 flex-col text-left"
                         >
                             <span className="text-sm font-medium">{s.name}</span>
@@ -538,7 +608,7 @@ function EvaluationsPage() {
     const cancelMutation = useCancelEvalRun();
     const deleteMutation = useDeleteEvalRun();
     const [showForm, setShowForm] = useState(false);
-    const [preloadedQuestions, setPreloadedQuestions] = useState<string[] | undefined>();
+    const [preloadedQuestions, setPreloadedQuestions] = useState<EvalQuestionInput[] | undefined>();
     const [preloadedSetId, setPreloadedSetId] = useState<number | undefined>();
     const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
 

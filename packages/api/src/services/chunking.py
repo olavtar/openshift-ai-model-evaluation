@@ -5,8 +5,9 @@ Splits page-level text into smaller, overlapping chunks suitable
 for embedding and retrieval.
 """
 
-CHUNK_SIZE = 512  # target tokens per chunk (approximated by words)
-CHUNK_OVERLAP = 64  # overlap tokens between consecutive chunks
+# Keep aligned with embedding model context (e.g. Nomic 512 tokens); dense text can be >2 tok/word.
+CHUNK_SIZE = 150
+CHUNK_OVERLAP = 20  # proportional to former 40/300 overlap ratio
 
 
 def chunk_text(

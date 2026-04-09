@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.services.embedding import EmbeddingsResult
 from src.services.retrieval import _fallback_search, retrieve_chunks
 
 
@@ -53,7 +54,11 @@ def test_retrieve_chunks_uses_fallback_when_no_embeddings(mock_session):
 
     import asyncio
 
-    with patch("src.services.retrieval.generate_embeddings", return_value=None):
+    with patch(
+        "src.services.retrieval.generate_embeddings",
+        new_callable=AsyncMock,
+        return_value=EmbeddingsResult(vectors=None, error=None),
+    ):
         result = asyncio.run(retrieve_chunks("test query", mock_session))
 
     assert len(result) == 1

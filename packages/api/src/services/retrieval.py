@@ -28,12 +28,14 @@ async def retrieve_chunks(
         'score' keys, ordered by relevance.
     """
     # Generate query embedding
-    embeddings = await generate_embeddings([query])
+    result = await generate_embeddings([query])
 
-    if embeddings:
-        return await _vector_search(embeddings[0], session, top_k)
+    if result.vectors:
+        return await _vector_search(result.vectors[0], session, top_k)
 
     logger.info("No query embedding available -- falling back to recent chunks")
+    if result.error:
+        logger.info("Embedding issue: %s", result.error)
     return await _fallback_search(session, top_k)
 
 
@@ -43,7 +45,10 @@ async def _vector_search(
     top_k: int,
 ) -> list[dict]:
     """Search chunks by cosine similarity to the query embedding."""
-    embedding_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+    # Pass a Python list so pgvector's bind processor serializes it correctly.
+    # A pre-formatted "[...]" string is treated as a single invalid value and
+    # raises ValueError inside numpy/pgvector when binding.
+    dist = Chunk.embedding.cosine_distance(query_embedding)
 
     stmt = (
         select(
@@ -51,11 +56,11 @@ async def _vector_search(
             Chunk.text,
             Chunk.source_document,
             Chunk.page_number,
-            (1 - Chunk.embedding.cosine_distance(embedding_str)).label("score"),
+            (1 - dist).label("score"),
         )
         .join(Document, Chunk.document_id == Document.id)
         .where(Chunk.embedding.isnot(None), Document.deleted_at.is_(None))
-        .order_by(Chunk.embedding.cosine_distance(embedding_str))
+        .order_by(dist)
         .limit(top_k)
     )
 

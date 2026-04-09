@@ -26,6 +26,7 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     status: str
     message: str
+    embedding_error: str | None = None
 
 
 class DocumentStatusResponse(BaseModel):

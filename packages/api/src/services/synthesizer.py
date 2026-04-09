@@ -1,19 +1,50 @@
 # This project was developed with assistance from AI tools.
-"""Question synthesizer using DeepEval to auto-generate evaluation questions from documents."""
+"""Question synthesizer -- generates evaluation questions from document chunks."""
 
+import json
 import logging
 
+import httpx
 from db import Chunk, Document
-from deepeval.synthesizer import Synthesizer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from .scoring import MaaSJudgeModel
+from .generation import GENERATION_TIMEOUT, _summarize_upstream_error
 
 logger = logging.getLogger(__name__)
 
 MAX_CONTEXTS = 50
+
+
+_SYNTHESIZE_PROMPT = """\
+You are given excerpts from regulatory and compliance documents. \
+Generate exactly {count} question-and-answer pairs that can ONLY be answered \
+using the information in the excerpts below. Do NOT invent facts or use outside knowledge.
+
+Rules:
+- Each question must be answerable from the provided text.
+- Each answer must quote or closely paraphrase the source text.
+- Focus on specific regulatory requirements, obligations, thresholds, and definitions.
+
+Respond in JSON: {{"questions": [{{"question": "...", "expected_answer": "..."}}]}}
+
+--- DOCUMENT EXCERPTS ---
+{context}
+--- END EXCERPTS ---"""
+
+
+def _parse_questions_json(raw: str) -> dict:
+    """Parse model JSON; tolerate optional ```json fences."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return json.loads(text)
 
 
 async def generate_questions(
@@ -23,8 +54,8 @@ async def generate_questions(
 ) -> list[dict]:
     """Generate evaluation questions from ingested document chunks.
 
-    Uses DeepEval's Synthesizer with the MaaS judge model to create
-    question/expected-answer pairs from existing document chunks.
+    Calls the same OpenAI-compatible chat endpoint as RAG generation (httpx),
+    using ``question_synthesis_model_name`` (see Settings).
 
     Args:
         session: Database session.
@@ -51,35 +82,61 @@ async def generate_questions(
     if not chunk_texts:
         return []
 
-    judge = MaaSJudgeModel(
-        model_name=settings.JUDGE_MODEL_NAME,
-        base_url=settings.judge_endpoint,
-        api_key=settings.judge_token,
-    )
+    model_name = settings.question_synthesis_model_name
+    if not model_name:
+        raise RuntimeError(
+            "No model configured for question synthesis. Set MODEL_A_NAME, JUDGE_MODEL_NAME, "
+            "or QUESTION_SYNTHESIS_MODEL_NAME."
+        )
 
-    synthesizer = Synthesizer(model=judge)
+    model_cfg = settings.get_model_config(model_name)
+    if not model_cfg["token"]:
+        raise RuntimeError("No API token configured for question synthesis.")
 
-    # DeepEval expects contexts as list of list of strings
-    # Each inner list is a group of contexts for one question
-    # We group chunks in pairs to give the synthesizer richer context
-    context_groups = []
-    for i in range(0, len(chunk_texts), 2):
-        group = chunk_texts[i : i + 2]
-        context_groups.append(group)
+    context = "\n\n".join(chunk_texts[:MAX_CONTEXTS])
+    prompt = _SYNTHESIZE_PROMPT.format(count=max_questions, context=context)
 
-    if not context_groups:
-        return []
+    url = f"{model_cfg['endpoint']}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {model_cfg['token']}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 4096,
+    }
 
-    goldens = await synthesizer.a_generate_goldens_from_contexts(
-        contexts=context_groups,
-        max_goldens_per_context=max(1, max_questions // len(context_groups)),
-    )
+    try:
+        async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
 
-    questions = []
-    for golden in goldens[:max_questions]:
-        questions.append({
-            "question": golden.input,
-            "expected_answer": golden.expected_output,
-        })
+        data = response.json()
+        text = data["choices"][0]["message"]["content"]
+        parsed = _parse_questions_json(text)
 
-    return questions
+        raw_questions = parsed.get("questions", [])
+        questions = []
+        for item in raw_questions[:max_questions]:
+            if isinstance(item, dict) and item.get("question"):
+                questions.append({
+                    "question": item["question"],
+                    "expected_answer": item.get("expected_answer"),
+                })
+
+        return questions
+
+    except httpx.HTTPStatusError as e:
+        detail = _summarize_upstream_error(e.response)
+        logger.error(
+            "Question synthesis HTTP %s for model %r: %s",
+            e.response.status_code,
+            model_name,
+            detail or "(empty body)",
+        )
+        raise RuntimeError(detail or f"Model returned HTTP {e.response.status_code}") from e
+    except Exception as e:
+        logger.error("Question synthesis failed: %s", e, exc_info=True)
+        raise

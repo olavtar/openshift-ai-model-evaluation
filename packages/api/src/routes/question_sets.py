@@ -8,10 +8,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..schemas.question_set import QuestionSetCreate, QuestionSetResponse
+from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _build_response(qs: QuestionSet) -> QuestionSetResponse:
+    """Build response, normalizing old plain-string questions to objects."""
+    items = []
+    for q in qs.questions:
+        if isinstance(q, str):
+            items.append(QuestionSetItem(question=q))
+        elif isinstance(q, dict):
+            items.append(QuestionSetItem(**q))
+        else:
+            items.append(q)
+    return QuestionSetResponse(
+        id=qs.id,
+        name=qs.name,
+        questions=items,
+        created_at=qs.created_at,
+    )
 
 
 @router.post("/", response_model=QuestionSetResponse, status_code=201)
@@ -20,10 +38,16 @@ async def create_question_set(
     session: AsyncSession = Depends(get_db),
 ) -> QuestionSetResponse:
     """Save a reusable set of evaluation questions."""
-    qs = QuestionSet(name=request.name, questions=request.questions)
+    normalized = []
+    for q in request.questions:
+        if isinstance(q, str):
+            normalized.append({"question": q})
+        else:
+            normalized.append(q.model_dump(exclude_none=True))
+    qs = QuestionSet(name=request.name, questions=normalized)
     session.add(qs)
     await session.flush()
-    response = QuestionSetResponse.model_validate(qs)
+    response = _build_response(qs)
     await session.commit()
     return response
 
@@ -36,7 +60,7 @@ async def list_question_sets(
     result = await session.execute(
         select(QuestionSet).order_by(QuestionSet.created_at.desc())
     )
-    return [QuestionSetResponse.model_validate(qs) for qs in result.scalars().all()]
+    return [_build_response(qs) for qs in result.scalars().all()]
 
 
 @router.get("/{question_set_id}", response_model=QuestionSetResponse)
@@ -48,7 +72,7 @@ async def get_question_set(
     qs = await session.get(QuestionSet, question_set_id)
     if not qs:
         raise HTTPException(status_code=404, detail="Question set not found")
-    return QuestionSetResponse.model_validate(qs)
+    return _build_response(qs)
 
 
 @router.delete("/{question_set_id}", status_code=204)

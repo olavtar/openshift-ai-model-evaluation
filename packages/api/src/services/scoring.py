@@ -36,8 +36,11 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         api_key: str,
     ):
         self._model_name = model_name
-        self._base_url = base_url
-        self._api_key = api_key
+        self._base_url = (base_url or "").rstrip("/")
+        t = (api_key or "").strip()
+        if t.lower().startswith("bearer "):
+            t = t[7:].strip()
+        self._api_key = t
         self._sync_client = OpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
         self._async_client = AsyncOpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
         super().__init__(model=model_name)
@@ -45,7 +48,7 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
     def load_model(self):
         return self._sync_client
 
-    def generate(self, prompt: str, schema=None) -> str:
+    def generate(self, prompt: str) -> str:
         response = self._sync_client.chat.completions.create(
             model=self._model_name,
             messages=[{"role": "user", "content": prompt}],
@@ -53,7 +56,7 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         )
         return response.choices[0].message.content
 
-    async def a_generate(self, prompt: str, schema=None) -> str:
+    async def a_generate(self, prompt: str) -> str:
         response = await self._async_client.chat.completions.create(
             model=self._model_name,
             messages=[{"role": "user", "content": prompt}],
@@ -68,9 +71,9 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
 def _get_judge_model() -> DeepEvalBaseLLM:
     """Create judge model from settings."""
     return MaaSJudgeModel(
-        model_name=settings.JUDGE_MODEL_NAME,
-        base_url=settings.judge_endpoint,
-        api_key=settings.judge_token,
+        model_name=settings.resolved_judge_model_name,
+        base_url=settings.MAAS_ENDPOINT,
+        api_key=settings.api_token_bare,
     )
 
 
@@ -94,8 +97,14 @@ async def score_result(
         context_precision_score, context_relevancy_score,
         and is_hallucination.
     """
-    if not settings.judge_token:
+    if not settings.API_TOKEN:
         logger.warning("No API token for judge model, skipping scoring")
+        return {}
+
+    if not settings.resolved_judge_model_name:
+        logger.warning(
+            "No judge model name configured (set JUDGE_MODEL_NAME or MODEL_A_NAME), skipping scoring"
+        )
         return {}
 
     judge = _get_judge_model()
