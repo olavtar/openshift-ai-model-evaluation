@@ -10,6 +10,7 @@ import {
     useSynthesizeQuestions,
 } from '../../hooks/evaluation';
 import { useModels } from '../../hooks/models';
+import { useDocuments } from '../../hooks/documents';
 import {
     useQuestionSets,
     useCreateQuestionSet,
@@ -25,6 +26,9 @@ import {
     AlertTriangle,
     Save,
     XCircle,
+    FileText,
+
+    CheckCircle2,
 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import type { EvalQuestionInput } from '../../services/evaluation';
@@ -338,7 +342,7 @@ function NewEvalForm({
                                         updated[i] = { ...updated[i], expected_answer: e.target.value || null };
                                         setQuestions(updated);
                                     }}
-                                    placeholder="Expected answer (enables context precision scoring)"
+                                    placeholder="Expected answer (enables completeness and correctness scoring)"
                                     className="mt-1.5 w-full resize-none rounded border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus:border-primary/50"
                                     rows={2}
                                 />
@@ -490,121 +494,69 @@ function NewEvalForm({
     );
 }
 
-function CompareSelector({ runs }: { runs: EvalRun[] }) {
-    const navigate = useNavigate();
-    const completedRuns = runs.filter((r) => r.status === 'completed');
-    const [runA, setRunA] = useState<number>(0);
-    const [runB, setRunB] = useState<number>(0);
-
-    if (completedRuns.length < 2) return null;
-
-    return (
-        <div className="rounded-xl border bg-card p-4">
-            <h3 className="mb-3 text-sm font-semibold">Compare Runs</h3>
-            <div className="flex items-end gap-3">
-                <div className="flex-1">
-                    <label className="mb-1 block text-xs text-muted-foreground">Run A</label>
-                    <select
-                        value={runA}
-                        onChange={(e) => setRunA(Number(e.target.value))}
-                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                    >
-                        <option value={0}>Select run</option>
-                        {completedRuns.map((r) => (
-                            <option key={r.id} value={r.id}>
-                                #{r.id} - {r.model_name}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <span className="pb-2 text-sm text-muted-foreground">vs</span>
-                <div className="flex-1">
-                    <label className="mb-1 block text-xs text-muted-foreground">Run B</label>
-                    <select
-                        value={runB}
-                        onChange={(e) => setRunB(Number(e.target.value))}
-                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                    >
-                        <option value={0}>Select run</option>
-                        {completedRuns.map((r) => (
-                            <option key={r.id} value={r.id}>
-                                #{r.id} - {r.model_name}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <button
-                    onClick={() =>
-                        navigate({
-                            to: '/evaluations/compare',
-                            search: { run_a: runA, run_b: runB },
-                        })
-                    }
-                    disabled={!runA || !runB || runA === runB}
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                >
-                    Compare
-                </button>
-            </div>
-        </div>
-    );
+interface WorkflowStep {
+    label: string;
+    done: boolean;
+    action?: { label: string; to: string };
 }
 
-function QuestionSetsPanel({
-    onLoad,
+function WorkflowBanner({
+    steps,
+    nextAction,
 }: {
-    onLoad: (questions: EvalQuestionInput[], setId: number) => void;
+    steps: WorkflowStep[];
+    nextAction: { label: string; onClick: () => void } | null;
 }) {
-    const { data: sets } = useQuestionSets();
-    const deleteMutation = useDeleteQuestionSet();
-
-    if (!sets || sets.length === 0) return null;
-
     return (
-        <div className="rounded-xl border bg-card p-4">
-            <h3 className="mb-3 text-sm font-semibold">Saved Question Sets</h3>
-            <p className="mb-3 text-xs text-muted-foreground">
-                Click a set to load its questions into a new evaluation.
-            </p>
-            <div className="space-y-2">
-                {sets.map((s) => (
-                    <div
-                        key={s.id}
-                        className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 transition-colors hover:bg-accent"
+        <div className="mb-6 rounded-xl border bg-card p-4">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-6">
+                    {steps.map((step, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                            {step.done ? (
+                                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                            ) : (
+                                <div className="flex h-4 w-4 items-center justify-center rounded-full border-2 border-muted-foreground/30 text-[9px] font-bold text-muted-foreground/50">
+                                    {i + 1}
+                                </div>
+                            )}
+                            {step.action && !step.done ? (
+                                <Link
+                                    to={step.action.to}
+                                    className="text-sm font-medium text-primary hover:underline"
+                                >
+                                    {step.label}
+                                </Link>
+                            ) : (
+                                <span
+                                    className={`text-sm ${step.done ? 'text-muted-foreground' : 'font-medium'}`}
+                                >
+                                    {step.label}
+                                </span>
+                            )}
+                            {i < steps.length - 1 && (
+                                <ArrowRight className="ml-4 h-3 w-3 text-muted-foreground/40" />
+                            )}
+                        </div>
+                    ))}
+                </div>
+                {nextAction && (
+                    <button
+                        onClick={nextAction.onClick}
+                        className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                     >
-                        <button
-                            onClick={() => onLoad(s.questions.map((q) => ({
-                                question: q.question,
-                                expected_answer: q.expected_answer,
-                            })), s.id)}
-                            className="flex flex-1 flex-col text-left"
-                        >
-                            <span className="text-sm font-medium">{s.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                                {s.questions.length} questions
-                                {s.created_at &&
-                                    ` -- ${new Date(s.created_at).toLocaleDateString()}`}
-                            </span>
-                        </button>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                deleteMutation.mutate(s.id);
-                            }}
-                            className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            title="Delete question set"
-                        >
-                            <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                    </div>
-                ))}
+                        {nextAction.label}
+                    </button>
+                )}
             </div>
         </div>
     );
 }
 
 function EvaluationsPage() {
+    const navigate = useNavigate();
     const { data: runs, isLoading, error, refetch } = useEvalRuns();
+    const { data: documents } = useDocuments();
     const cancelMutation = useCancelEvalRun();
     const deleteMutation = useDeleteEvalRun();
     const [showForm, setShowForm] = useState(false);
@@ -612,35 +564,85 @@ function EvaluationsPage() {
     const [preloadedSetId, setPreloadedSetId] = useState<number | undefined>();
     const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
 
+    const readyDocs = documents?.filter((d) => d.status === 'ready') ?? [];
+    const hasDocuments = readyDocs.length > 0;
+    const completedRuns =
+        runs?.filter((r) => r.status === 'completed' || r.status === 'complete') ?? [];
+    const hasRuns = (runs?.length ?? 0) > 0;
+
+
+    // Workflow steps
+    const steps: WorkflowStep[] = [
+        {
+            label: hasDocuments ? `${readyDocs.length} document${readyDocs.length !== 1 ? 's' : ''} indexed` : 'Upload documents',
+            done: hasDocuments,
+            action: !hasDocuments ? { label: 'Upload documents', to: '/documents' } : undefined,
+        },
+        {
+            label: completedRuns.length >= 1
+                ? `${completedRuns.length} evaluation${completedRuns.length !== 1 ? 's' : ''} completed`
+                : 'Run evaluations',
+            done: completedRuns.length >= 2,
+        },
+        {
+            label: 'Compare models',
+            done: false,
+        },
+    ];
+
+    // Determine the next action based on workflow state
+    let nextAction: { label: string; onClick: () => void } | null = null;
+    if (!hasDocuments) {
+        nextAction = { label: 'Upload Documents', onClick: () => navigate({ to: '/documents' }) };
+    } else if (completedRuns.length < 2) {
+        nextAction = {
+            label: completedRuns.length === 0 ? 'Run First Evaluation' : 'Run Another Model',
+            onClick: () => {
+                setPreloadedQuestions(undefined);
+                setPreloadedSetId(undefined);
+                setShowForm(true);
+            },
+        };
+    } else {
+        nextAction = {
+            label: 'Compare Evaluations',
+            onClick: () =>
+                navigate({
+                    to: '/evaluations/compare',
+                    search: { run_a: 0, run_b: 0 },
+                }),
+        };
+    }
+
     return (
         <div className="p-4 sm:p-6 lg:p-8">
             <div className="mx-auto max-w-5xl">
                 <div className="mb-6 flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Evaluation Runs</h1>
+                        <h1 className="text-2xl font-bold tracking-tight">Evaluations</h1>
                         <p className="text-sm text-muted-foreground">
-                            Run evaluations, then compare completed runs side by side.
+                            Upload documents, run evaluations on different models, then compare results.
                         </p>
                     </div>
-                    <button
-                        onClick={() => {
-                            setPreloadedQuestions(undefined);
-                            setPreloadedSetId(undefined);
-                            setShowForm(true);
-                        }}
-                        className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                    >
-                        <Plus className="h-4 w-4" />
-                        Run New Evaluation
-                    </button>
+                    {hasDocuments && (
+                        <button
+                            onClick={() => {
+                                setPreloadedQuestions(undefined);
+                                setPreloadedSetId(undefined);
+                                setShowForm(true);
+                            }}
+                            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                        >
+                            <Plus className="h-4 w-4" />
+                            New Evaluation
+                        </button>
+                    )}
                 </div>
 
-                {runs && runs.length >= 2 && (
-                    <div className="mb-6">
-                        <CompareSelector runs={runs} />
-                    </div>
-                )}
+                {/* Workflow progress banner */}
+                <WorkflowBanner steps={steps} nextAction={!showForm ? nextAction : null} />
 
+                {/* New evaluation form */}
                 {showForm && (
                     <div className="mb-6">
                         <NewEvalForm
@@ -662,47 +664,83 @@ function EvaluationsPage() {
                     </div>
                 )}
 
-                <div className="mb-6">
-                    <QuestionSetsPanel
-                        onLoad={(questions, setId) => {
-                            setPreloadedQuestions(questions);
-                            setPreloadedSetId(setId);
-                            setShowForm(true);
-                        }}
-                    />
-                </div>
+                {/* Empty state - no documents */}
+                {!hasDocuments && !isLoading && (
+                    <div className="rounded-xl border bg-card p-8 text-center">
+                        <FileText className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                        <h2 className="mb-1 text-base font-semibold">Upload documents first</h2>
+                        <p className="text-sm text-muted-foreground">
+                            The evaluation pipeline needs documents to retrieve context from.
+                            Upload PDFs to build your knowledge base, then come back to run evaluations.
+                        </p>
+                        <Link
+                            to="/documents"
+                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                        >
+                            <FileText className="h-4 w-4" />
+                            Go to Documents
+                        </Link>
+                    </div>
+                )}
+
+                {/* Empty state - has documents but no runs */}
+                {hasDocuments && !hasRuns && !showForm && !isLoading && (
+                    <div className="rounded-xl border bg-card p-8 text-center">
+                        <BarChart3 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                        <h2 className="mb-1 text-base font-semibold">No evaluations yet</h2>
+                        <p className="text-sm text-muted-foreground">
+                            Run your first evaluation to see how a model performs on your documents.
+                            You can generate questions automatically or write your own.
+                        </p>
+                        <button
+                            onClick={() => {
+                                setPreloadedQuestions(undefined);
+                                setPreloadedSetId(undefined);
+                                setShowForm(true);
+                            }}
+                            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                        >
+                            <Plus className="h-4 w-4" />
+                            Run First Evaluation
+                        </button>
+                    </div>
+                )}
+
+                {/* Run list */}
+                {hasRuns && (
+                    <div>
+                        <div className="mb-3 flex items-center justify-between">
+                            <h2 className="text-lg font-semibold">
+                                Evaluation Runs ({runs?.length ?? 0})
+                            </h2>
+                            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                <span>Faith.</span>
+                                <span>Relev.</span>
+                                <span>Latency</span>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            {runs?.map((run) => (
+                                <RunRow
+                                    key={run.id}
+                                    run={run}
+                                    isCancelling={cancellingIds.has(run.id)}
+                                    onCancel={(id) => {
+                                        setCancellingIds((prev) => new Set(prev).add(id));
+                                        cancelMutation.mutate(id);
+                                    }}
+                                    onDelete={(id) => deleteMutation.mutate(id)}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {isLoading && (
                     <p className="text-sm text-muted-foreground">Loading evaluations...</p>
                 )}
                 {error && <p className="text-sm text-destructive">{error.message}</p>}
 
-                {runs && runs.length === 0 && !showForm && (
-                    <div className="rounded-xl border bg-card p-8 text-center">
-                        <BarChart3 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground">
-                            No evaluations yet. Create runs for at least two models, then compare
-                            them in the Compare page.
-                        </p>
-                    </div>
-                )}
-
-                {runs && runs.length > 0 && (
-                    <div className="space-y-3">
-                        {runs.map((run) => (
-                            <RunRow
-                                key={run.id}
-                                run={run}
-                                isCancelling={cancellingIds.has(run.id)}
-                                onCancel={(id) => {
-                                    setCancellingIds((prev) => new Set(prev).add(id));
-                                    cancelMutation.mutate(id);
-                                }}
-                                onDelete={(id) => deleteMutation.mutate(id)}
-                            />
-                        ))}
-                    </div>
-                )}
             </div>
         </div>
     );

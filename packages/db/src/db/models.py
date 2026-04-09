@@ -145,6 +145,7 @@ class EvalResult(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     eval_run_id = Column(Integer, ForeignKey("eval_run.id", ondelete="CASCADE"), nullable=False, index=True)
     question = Column(Text, nullable=False)
+    expected_answer = Column(Text, nullable=True)
     answer = Column(Text, nullable=True)
     contexts = Column(Text, nullable=True)
     latency_ms = Column(Float, nullable=True)
