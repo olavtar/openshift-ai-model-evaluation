@@ -34,6 +34,10 @@ class EvalResultResponse(BaseModel):
     groundedness_score: float | None = None
     context_precision_score: float | None = None
     context_relevancy_score: float | None = None
+    completeness_score: float | None = None
+    correctness_score: float | None = None
+    compliance_accuracy_score: float | None = None
+    abstention_score: float | None = None
     is_hallucination: bool | None = None
     total_tokens: int | None = None
     error_message: str | None = None
@@ -53,6 +57,10 @@ class EvalRunResponse(BaseModel):
     avg_groundedness: float | None = None
     avg_context_precision: float | None = None
     avg_context_relevancy: float | None = None
+    avg_completeness: float | None = None
+    avg_correctness: float | None = None
+    avg_compliance_accuracy: float | None = None
+    avg_abstention: float | None = None
     hallucination_rate: float | None = None
     total_tokens: int | None = None
     error_message: str | None = None

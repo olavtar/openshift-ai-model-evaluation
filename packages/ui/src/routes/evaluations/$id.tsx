@@ -112,6 +112,26 @@ function ResultRow({ result }: { result: EvalResult }) {
                             <div className="text-xs text-muted-foreground">Context Relevancy</div>
                             <ScoreColor score={result.context_relevancy_score} />
                         </div>
+                        <div>
+                            <div className="text-xs text-muted-foreground">Completeness</div>
+                            <ScoreColor score={result.completeness_score} />
+                        </div>
+                        <div>
+                            <div className="text-xs text-muted-foreground">Correctness</div>
+                            <ScoreColor score={result.correctness_score} />
+                        </div>
+                        <div>
+                            <div className="text-xs text-muted-foreground">
+                                Compliance Accuracy
+                            </div>
+                            <ScoreColor score={result.compliance_accuracy_score} />
+                        </div>
+                        <div>
+                            <div className="text-xs text-muted-foreground">
+                                Abstention Quality
+                            </div>
+                            <ScoreColor score={result.abstention_score} />
+                        </div>
                     </div>
 
                     {result.contexts && (
@@ -229,6 +249,26 @@ function EvalRunDetailPage() {
                         label="Avg Latency"
                         value={formatLatency(run.avg_latency_ms)}
                         icon={<Clock className="h-3.5 w-3.5" />}
+                    />
+                    <MetricCard
+                        label="Completeness"
+                        value={formatScore(run.avg_completeness)}
+                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                    />
+                    <MetricCard
+                        label="Correctness"
+                        value={formatScore(run.avg_correctness)}
+                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                    />
+                    <MetricCard
+                        label="Compliance Accuracy"
+                        value={formatScore(run.avg_compliance_accuracy)}
+                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                    />
+                    <MetricCard
+                        label="Abstention Quality"
+                        value={formatScore(run.avg_abstention)}
+                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
                     />
                 </div>
 

@@ -49,8 +49,8 @@ async def _run_evaluation(
     """Execute an evaluation run in the background.
 
     For each question: retrieve context, generate answer, score with DeepEval
-    metrics (faithfulness, relevancy, context precision, context relevancy),
-    record results.
+    metrics (faithfulness, relevancy, context precision, context relevancy,
+    completeness, correctness, compliance accuracy, abstention), record results.
     """
     from db.database import SessionLocal
 
@@ -70,6 +70,10 @@ async def _run_evaluation(
             all_groundedness = []
             all_context_precision = []
             all_context_relevancy = []
+            all_completeness = []
+            all_correctness = []
+            all_compliance_accuracy = []
+            all_abstention = []
             hallucination_count = 0
             hallucination_scored_count = 0
 
@@ -96,7 +100,11 @@ async def _run_evaluation(
                         model_name=model_name,
                     )
                     latency = (time.time() - start) * 1000
-                    tokens = result.get("usage", {}).get("total_tokens") if result.get("usage") else None
+                    tokens = (
+                        result.get("usage", {}).get("total_tokens")
+                        if result.get("usage")
+                        else None
+                    )
 
                     context_texts = [c["text"] for c in chunks] if chunks else []
                     contexts_str = "\n---\n".join(context_texts) if context_texts else None
@@ -123,6 +131,10 @@ async def _run_evaluation(
                         groundedness_score=scores.get("groundedness_score"),
                         context_precision_score=scores.get("context_precision_score"),
                         context_relevancy_score=scores.get("context_relevancy_score"),
+                        completeness_score=scores.get("completeness_score"),
+                        correctness_score=scores.get("correctness_score"),
+                        compliance_accuracy_score=scores.get("compliance_accuracy_score"),
+                        abstention_score=scores.get("abstention_score"),
                         is_hallucination=scores.get("is_hallucination"),
                         total_tokens=tokens,
                     )
@@ -139,6 +151,14 @@ async def _run_evaluation(
                         all_context_precision.append(scores["context_precision_score"])
                     if scores.get("context_relevancy_score") is not None:
                         all_context_relevancy.append(scores["context_relevancy_score"])
+                    if scores.get("completeness_score") is not None:
+                        all_completeness.append(scores["completeness_score"])
+                    if scores.get("correctness_score") is not None:
+                        all_correctness.append(scores["correctness_score"])
+                    if scores.get("compliance_accuracy_score") is not None:
+                        all_compliance_accuracy.append(scores["compliance_accuracy_score"])
+                    if scores.get("abstention_score") is not None:
+                        all_abstention.append(scores["abstention_score"])
                     if scores.get("is_hallucination") is not None:
                         hallucination_scored_count += 1
                         if scores["is_hallucination"]:
@@ -170,7 +190,9 @@ async def _run_evaluation(
             # Compute aggregates from whatever questions were completed
             run.avg_latency_ms = total_latency / completed if completed else None
             run.total_tokens = total_tokens_sum or None
-            run.avg_relevancy = sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
+            run.avg_relevancy = (
+                sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
+            )
             run.avg_groundedness = (
                 sum(all_groundedness) / len(all_groundedness) if all_groundedness else None
             )
@@ -183,6 +205,20 @@ async def _run_evaluation(
                 sum(all_context_relevancy) / len(all_context_relevancy)
                 if all_context_relevancy
                 else None
+            )
+            run.avg_completeness = (
+                sum(all_completeness) / len(all_completeness) if all_completeness else None
+            )
+            run.avg_correctness = (
+                sum(all_correctness) / len(all_correctness) if all_correctness else None
+            )
+            run.avg_compliance_accuracy = (
+                sum(all_compliance_accuracy) / len(all_compliance_accuracy)
+                if all_compliance_accuracy
+                else None
+            )
+            run.avg_abstention = (
+                sum(all_abstention) / len(all_abstention) if all_abstention else None
             )
             run.hallucination_rate = (
                 hallucination_count / hallucination_scored_count
@@ -349,7 +385,9 @@ async def synthesize_questions(
         )
     except Exception as e:
         logger.exception("Question synthesis failed")
-        raise HTTPException(status_code=500, detail=f"Question synthesis failed: {str(e)[:200]}")
+        raise HTTPException(
+            status_code=500, detail=f"Question synthesis failed: {str(e)[:200]}"
+        )
     return SynthesizeResponse(
         questions=[
             SynthesizedQuestion(
@@ -376,6 +414,10 @@ def _build_run_response(run: EvalRun) -> EvalRunResponse:
         avg_groundedness=run.avg_groundedness,
         avg_context_precision=run.avg_context_precision,
         avg_context_relevancy=run.avg_context_relevancy,
+        avg_completeness=run.avg_completeness,
+        avg_correctness=run.avg_correctness,
+        avg_compliance_accuracy=run.avg_compliance_accuracy,
+        avg_abstention=run.avg_abstention,
         hallucination_rate=run.hallucination_rate,
         total_tokens=run.total_tokens,
         error_message=run.error_message,
@@ -396,6 +438,10 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         groundedness_score=r.groundedness_score,
         context_precision_score=r.context_precision_score,
         context_relevancy_score=r.context_relevancy_score,
+        completeness_score=r.completeness_score,
+        correctness_score=r.correctness_score,
+        compliance_accuracy_score=r.compliance_accuracy_score,
+        abstention_score=r.abstention_score,
         is_hallucination=r.is_hallucination,
         total_tokens=r.total_tokens,
         error_message=r.error_message,
@@ -451,6 +497,12 @@ async def compare_eval_runs(
         _compare_metric(
             "context_relevancy", run_a.avg_context_relevancy, run_b.avg_context_relevancy
         ),
+        _compare_metric("completeness", run_a.avg_completeness, run_b.avg_completeness),
+        _compare_metric("correctness", run_a.avg_correctness, run_b.avg_correctness),
+        _compare_metric(
+            "compliance_accuracy", run_a.avg_compliance_accuracy, run_b.avg_compliance_accuracy
+        ),
+        _compare_metric("abstention", run_a.avg_abstention, run_b.avg_abstention),
         _compare_metric(
             "hallucination_rate",
             run_a.hallucination_rate,
@@ -472,7 +524,9 @@ async def compare_eval_runs(
     a_by_question = {r.question: r for r in results_a.scalars().all()}
     b_by_question = {r.question: r for r in results_b.scalars().all()}
 
-    all_questions = list(dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys())))
+    all_questions = list(
+        dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys()))
+    )
 
     questions = [
         QuestionComparison(

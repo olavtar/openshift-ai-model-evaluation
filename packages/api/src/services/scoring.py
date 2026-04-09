@@ -3,8 +3,13 @@
 
 Uses LLM-as-judge via DeepEval metrics to score RAG responses on
 faithfulness (groundedness), answer relevancy, contextual precision,
-and contextual relevancy. The judge model is configurable — defaults
+contextual relevancy, completeness, correctness, compliance accuracy,
+and abstention quality. The judge model is configurable — defaults
 to MaaS endpoint.
+
+All metrics use threshold=0.0 (raw scorer only). Pass/fail semantics
+live exclusively in the verdict layer (verdicts.py) using profile
+thresholds.
 """
 
 import logging
@@ -14,9 +19,10 @@ from deepeval.metrics import (
     ContextualPrecisionMetric,
     ContextualRelevancyMetric,
     FaithfulnessMetric,
+    GEval,
 )
 from deepeval.models import DeepEvalBaseLLM
-from deepeval.test_case import LLMTestCase
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 from openai import AsyncOpenAI, OpenAI
 
 from ..core.config import settings
@@ -77,6 +83,111 @@ def _get_judge_model() -> DeepEvalBaseLLM:
     )
 
 
+def _completeness_metric(judge: DeepEvalBaseLLM) -> GEval:
+    """GEval metric: did the answer cover all key points from the expected answer?"""
+    return GEval(
+        name="Completeness",
+        criteria=(
+            "Evaluate whether the actual output covers all the key points, requirements, "
+            "and information present in the expected output. Penalize omissions of important "
+            "details, conditions, or qualifications."
+        ),
+        evaluation_steps=[
+            "Identify all key points and requirements in the expected output.",
+            "Check which of those key points appear in the actual output.",
+            "Penalize for each missing key point proportional to its importance.",
+            "A score of 1.0 means all key points are covered; 0.0 means none are.",
+        ],
+        evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+        model=judge,
+        threshold=0.0,
+        async_mode=True,
+    )
+
+
+def _correctness_metric(judge: DeepEvalBaseLLM) -> GEval:
+    """GEval metric: is what the answer said factually consistent with the expected answer?"""
+    return GEval(
+        name="Correctness",
+        criteria=(
+            "Evaluate whether the claims and facts in the actual output are consistent with "
+            "the expected output. Penalize any statements that contradict, misstate, or "
+            "distort information from the expected output."
+        ),
+        evaluation_steps=[
+            "Identify factual claims in the actual output.",
+            "Compare each claim against the expected output for consistency.",
+            "Penalize contradictions and misstatements.",
+            "A score of 1.0 means fully correct; 0.0 means entirely incorrect.",
+        ],
+        evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.EXPECTED_OUTPUT],
+        model=judge,
+        threshold=0.0,
+        async_mode=True,
+    )
+
+
+def _compliance_accuracy_metric(judge: DeepEvalBaseLLM) -> GEval:
+    """GEval metric: are domain-specific compliance items correctly handled?"""
+    return GEval(
+        name="Compliance Accuracy",
+        criteria=(
+            "Evaluate whether the answer correctly handles domain-specific compliance items: "
+            "obligations, restrictions, approvals, disclosures, thresholds, escalation "
+            "conditions, evidence requirements, and cited authorities. Check that claims are "
+            "supported by the retrieval context and that critical requirements from the "
+            "expected output are not omitted."
+        ),
+        evaluation_steps=[
+            "Identify compliance-relevant items in the expected output (obligations, "
+            "thresholds, restrictions, disclosures, authorities).",
+            "Check whether each item is present and correctly stated in the actual output.",
+            "Verify that compliance claims are supported by the retrieval context.",
+            "Penalize omitted critical requirements and unsupported claims.",
+            "A score of 1.0 means full compliance accuracy; 0.0 means none.",
+        ],
+        evaluation_params=[
+            LLMTestCaseParams.ACTUAL_OUTPUT,
+            LLMTestCaseParams.EXPECTED_OUTPUT,
+            LLMTestCaseParams.RETRIEVAL_CONTEXT,
+        ],
+        model=judge,
+        threshold=0.0,
+        async_mode=True,
+    )
+
+
+def _abstention_metric(judge: DeepEvalBaseLLM) -> GEval:
+    """GEval metric: does the answer appropriately handle uncertainty?"""
+    return GEval(
+        name="Abstention Quality",
+        criteria=(
+            "Evaluate whether the answer appropriately handles uncertainty. When the "
+            "retrieval context does not contain sufficient information to fully answer "
+            "the question, the answer should explicitly acknowledge the limitation rather "
+            "than fabricating or guessing. Penalize confident-sounding answers that go "
+            "beyond what the context supports."
+        ),
+        evaluation_steps=[
+            "Assess whether the retrieval context contains enough information to answer "
+            "the question.",
+            "If context is sufficient, check that the answer uses it appropriately "
+            "(score 1.0 for correct use).",
+            "If context is insufficient, check that the answer acknowledges the gap.",
+            "Penalize confident assertions not supported by the retrieval context.",
+            "A score of 1.0 means appropriate handling; 0.0 means confidently wrong.",
+        ],
+        evaluation_params=[
+            LLMTestCaseParams.INPUT,
+            LLMTestCaseParams.ACTUAL_OUTPUT,
+            LLMTestCaseParams.RETRIEVAL_CONTEXT,
+        ],
+        model=judge,
+        threshold=0.0,
+        async_mode=True,
+    )
+
+
 async def score_result(
     question: str,
     answer: str,
@@ -85,17 +196,21 @@ async def score_result(
 ) -> dict:
     """Score a single RAG response using DeepEval metrics.
 
+    Always runs: faithfulness, answer relevancy, context relevancy, abstention.
+    When expected_answer is provided: also runs completeness, correctness,
+    compliance accuracy, and context precision.
+
+    All metrics use threshold=0.0 (raw scores only). Pass/fail logic lives
+    in the verdict layer using profile thresholds.
+
     Args:
         question: The input question.
         answer: The model's generated answer.
         contexts: Retrieved context chunks used for generation.
-        expected_answer: Optional ground truth answer. Required for
-            context precision scoring.
+        expected_answer: Optional ground truth answer.
 
     Returns:
-        Dict with relevancy_score, groundedness_score,
-        context_precision_score, context_relevancy_score,
-        and is_hallucination.
+        Dict with metric scores and is_hallucination flag.
     """
     if not settings.API_TOKEN:
         logger.warning("No API token for judge model, skipping scoring")
@@ -103,7 +218,8 @@ async def score_result(
 
     if not settings.resolved_judge_model_name:
         logger.warning(
-            "No judge model name configured (set JUDGE_MODEL_NAME or MODEL_A_NAME), skipping scoring"
+            "No judge model name configured (set JUDGE_MODEL_NAME or MODEL_A_NAME), "
+            "skipping scoring"
         )
         return {}
 
@@ -118,21 +234,28 @@ async def score_result(
 
     scores: dict = {}
 
+    # Always-on metrics (no expected_answer needed)
     metrics: list[tuple[str, object]] = [
-        ("groundedness_score", FaithfulnessMetric(model=judge, threshold=0.5, async_mode=True)),
-        ("relevancy_score", AnswerRelevancyMetric(model=judge, threshold=0.5, async_mode=True)),
+        ("groundedness_score", FaithfulnessMetric(model=judge, threshold=0.0, async_mode=True)),
+        ("relevancy_score", AnswerRelevancyMetric(model=judge, threshold=0.0, async_mode=True)),
         (
             "context_relevancy_score",
-            ContextualRelevancyMetric(model=judge, threshold=0.5, async_mode=True),
+            ContextualRelevancyMetric(model=judge, threshold=0.0, async_mode=True),
         ),
+        ("abstention_score", _abstention_metric(judge)),
     ]
 
-    # ContextualPrecisionMetric requires expected_output (ground truth)
+    # Metrics that require expected_answer (ground truth)
     if expected_answer:
-        metrics.append((
-            "context_precision_score",
-            ContextualPrecisionMetric(model=judge, threshold=0.5, async_mode=True),
-        ))
+        metrics.extend([
+            (
+                "context_precision_score",
+                ContextualPrecisionMetric(model=judge, threshold=0.0, async_mode=True),
+            ),
+            ("completeness_score", _completeness_metric(judge)),
+            ("correctness_score", _correctness_metric(judge)),
+            ("compliance_accuracy_score", _compliance_accuracy_metric(judge)),
+        ])
 
     for name, metric in metrics:
         try:
