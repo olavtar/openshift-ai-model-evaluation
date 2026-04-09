@@ -16,7 +16,7 @@ from ..schemas.documents import (
     DocumentStatusResponse,
     DocumentUploadResponse,
 )
-from ..services.chunking import chunk_text
+from ..services.chunking import section_chunk_text
 from ..services.embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def upload_document(
     # Split page text into smaller overlapping chunks
     all_chunks = []
     for page in pages:
-        page_chunks = chunk_text(
+        page_chunks = section_chunk_text(
             text=page["text"],
             source_document=safe_filename,
             page_number=str(page["page_number"]),
@@ -115,6 +115,7 @@ async def upload_document(
             text=chunk_data["text"],
             source_document=chunk_data["source_document"],
             page_number=chunk_data["page_number"],
+            section_path=chunk_data.get("section_path"),
             element_type="chunk",
             token_count=chunk_data["token_count"],
             embedding=embeddings[i] if embeddings else None,

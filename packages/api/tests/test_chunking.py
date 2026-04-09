@@ -1,7 +1,7 @@
 # This project was developed with assistance from AI tools.
 """Tests for text chunking service."""
 
-from src.services.chunking import CHUNK_SIZE, chunk_text
+from src.services.chunking import CHUNK_SIZE, _is_heading, chunk_text, section_chunk_text
 
 
 def test_short_text_returns_single_chunk():
@@ -61,3 +61,71 @@ def test_all_text_covered():
         all_chunk_words.update(chunk["text"].split())
 
     assert all_chunk_words == set(words)
+
+
+# --- Structure-aware chunking tests ---
+
+
+def test_is_heading_all_caps():
+    """Should detect ALL CAPS lines as headings."""
+    assert _is_heading("RISK FACTORS") is True
+    assert _is_heading("ITEM 1A RISK FACTORS") is True
+    assert _is_heading("This is a normal sentence.") is False
+
+
+def test_is_heading_numbered_section():
+    """Should detect numbered section patterns as headings."""
+    assert _is_heading("1.1 Overview") is True
+    assert _is_heading("2.3.1 Capital Requirements") is True
+    assert _is_heading("Section 4 Compliance") is True
+    assert _is_heading("Article III Definitions") is True
+
+
+def test_is_heading_short_title():
+    """Should detect short title-like lines as headings."""
+    assert _is_heading("Executive Summary") is True
+    assert _is_heading(
+        "This is a much longer line that is clearly body text and not a heading."
+    ) is False
+
+
+def test_section_chunk_preserves_section_path():
+    """Should tag chunks with section_path from detected headings."""
+    text = """RISK FACTORS
+The company faces several risks including market volatility and regulatory changes.
+These risks could materially affect our financial condition.
+
+FINANCIAL STATEMENTS
+Revenue for the quarter was $100M representing a 15% increase.
+Operating expenses totaled $80M."""
+
+    result = section_chunk_text(text, source_document="10k.pdf", page_number="5")
+    assert len(result) >= 2
+
+    risk_chunks = [c for c in result if c.get("section_path") == "RISK FACTORS"]
+    fin_chunks = [c for c in result if c.get("section_path") == "FINANCIAL STATEMENTS"]
+    assert len(risk_chunks) >= 1
+    assert len(fin_chunks) >= 1
+    assert "risks" in risk_chunks[0]["text"].lower()
+    assert "revenue" in fin_chunks[0]["text"].lower()
+
+
+def test_section_chunk_falls_back_for_plain_text():
+    """Should fall back to simple chunking when no sections are detected."""
+    text = "This is just a plain paragraph with no headings or structure at all."
+    result = section_chunk_text(text, source_document="plain.pdf")
+    assert len(result) >= 1
+    assert result[0].get("section_path") is None
+
+
+def test_section_chunk_numbered_sections():
+    """Should handle numbered section patterns."""
+    text = """1.1 Purpose
+This document defines the compliance requirements for all trading activities.
+
+1.2 Scope
+These requirements apply to all registered representatives and their supervisors."""
+
+    result = section_chunk_text(text, source_document="policy.pdf")
+    assert any(c.get("section_path") == "1.1 Purpose" for c in result)
+    assert any(c.get("section_path") == "1.2 Scope" for c in result)

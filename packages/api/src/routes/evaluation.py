@@ -122,7 +122,20 @@ async def _run_evaluation(
                     )
 
                     context_texts = [c["text"] for c in chunks] if chunks else []
-                    contexts_str = "\n---\n".join(context_texts) if context_texts else None
+                    # Format context with source metadata for UI display
+                    if chunks:
+                        context_parts = []
+                        for c in chunks:
+                            header_parts = [c.get("source_document", "")]
+                            if c.get("page_number"):
+                                header_parts.append(f"p.{c['page_number']}")
+                            if c.get("section_path"):
+                                header_parts.append(c["section_path"])
+                            header = " | ".join(p for p in header_parts if p)
+                            context_parts.append(f"[{header}]\n{c['text']}")
+                        contexts_str = "\n---\n".join(context_parts)
+                    else:
+                        contexts_str = None
 
                     if _is_cancelled():
                         break
