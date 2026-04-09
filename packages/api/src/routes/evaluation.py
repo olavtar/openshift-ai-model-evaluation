@@ -27,9 +27,11 @@ from ..schemas.evaluation import (
     SynthesizeResponse,
 )
 from ..services.generation import generate_answer
+from ..services.profiles import load_profile
 from ..services.retrieval import retrieve_chunks
 from ..services.scoring import score_result
 from ..services.synthesizer import generate_questions
+from ..services.verdicts import QuestionVerdict, compute_question_verdict, compute_run_verdict
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -45,6 +47,7 @@ async def _run_evaluation(
     eval_run_id: int,
     model_name: str,
     questions: list[EvalQuestion],
+    profile_id: str | None = None,
 ) -> None:
     """Execute an evaluation run in the background.
 
@@ -60,7 +63,18 @@ async def _run_evaluation(
             return
 
         run.status = "running"
+        if profile_id:
+            run.profile_id = profile_id
         await session.commit()
+
+        # Load profile for verdict computation (if specified)
+        profile = None
+        if profile_id:
+            try:
+                profile = load_profile(profile_id)
+                run.profile_version = profile.version
+            except (FileNotFoundError, ValueError) as e:
+                logger.warning("Could not load profile '%s': %s", profile_id, e)
 
         try:
             total_latency = 0.0
@@ -76,6 +90,7 @@ async def _run_evaluation(
             all_abstention = []
             hallucination_count = 0
             hallucination_scored_count = 0
+            question_verdicts: list[QuestionVerdict] = []
 
             def _is_cancelled() -> bool:
                 return eval_run_id in _cancelled_runs
@@ -138,6 +153,14 @@ async def _run_evaluation(
                         is_hallucination=scores.get("is_hallucination"),
                         total_tokens=tokens,
                     )
+
+                    # Compute per-question verdict if profile is loaded
+                    if profile and scores:
+                        q_verdict = compute_question_verdict(scores, profile)
+                        eval_result.verdict = q_verdict.verdict
+                        eval_result.fail_reasons = q_verdict.fail_reasons
+                        question_verdicts.append(q_verdict)
+
                     session.add(eval_result)
 
                     total_latency += latency
@@ -225,6 +248,15 @@ async def _run_evaluation(
                 if hallucination_scored_count > 0
                 else None
             )
+
+            # Compute run-level verdict
+            if profile and question_verdicts:
+                run_verdict = compute_run_verdict(question_verdicts)
+                run.overall_verdict = run_verdict.overall
+                run.pass_count = run_verdict.pass_count
+                run.fail_count = run_verdict.fail_count
+                run.review_count = run_verdict.review_count
+
             await session.commit()
 
         except Exception as e:
@@ -274,6 +306,7 @@ async def create_eval_run(
         eval_run_id=run_id,
         model_name=request.model_name,
         questions=normalized,
+        profile_id=request.profile_id,
     )
 
     await session.commit()
@@ -419,6 +452,11 @@ def _build_run_response(run: EvalRun) -> EvalRunResponse:
         avg_compliance_accuracy=run.avg_compliance_accuracy,
         avg_abstention=run.avg_abstention,
         hallucination_rate=run.hallucination_rate,
+        profile_id=run.profile_id,
+        overall_verdict=run.overall_verdict,
+        pass_count=run.pass_count,
+        fail_count=run.fail_count,
+        review_count=run.review_count,
         total_tokens=run.total_tokens,
         error_message=run.error_message,
         created_at=run.created_at,
@@ -443,6 +481,8 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         compliance_accuracy_score=r.compliance_accuracy_score,
         abstention_score=r.abstention_score,
         is_hallucination=r.is_hallucination,
+        verdict=r.verdict,
+        fail_reasons=r.fail_reasons,
         total_tokens=r.total_tokens,
         error_message=r.error_message,
     )

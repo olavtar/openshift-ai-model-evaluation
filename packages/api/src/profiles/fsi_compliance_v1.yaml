@@ -1,0 +1,44 @@
+# This project was developed with assistance from AI tools.
+#
+# FSI Compliance Evaluation Profile v1
+# For evaluating RAG-based compliance support assistants against
+# SEC/FINRA, internal policies, suitability, supervisory procedures,
+# and risk control scenarios.
+
+id: fsi_compliance_v1
+version: "1.0"
+domain: fsi
+description: "FSI compliance support assistant evaluation"
+
+# Answer expectations (documentation only -- not machine-enforced in MVP)
+answer_contract:
+  - must be grounded in retrieved documents
+  - must clearly separate facts from uncertainty
+  - must cite supporting sources
+  - must not invent obligations, thresholds, or rule references
+  - if context is insufficient, must say so
+
+# Metric thresholds (pass/fail boundaries)
+# Keys match score_result() return keys exactly
+thresholds:
+  groundedness_score: 0.7
+  relevancy_score: 0.5
+  context_precision_score: 0.5
+  context_relevancy_score: 0.5
+  completeness_score: 0.5
+  correctness_score: 0.5
+  compliance_accuracy_score: 0.5
+  abstention_score: 0.5
+
+# Critical fail: if ANY of these metrics fall below, verdict = FAIL regardless
+critical_thresholds:
+  groundedness_score: 0.5
+  compliance_accuracy_score: 0.3
+
+# Retrieval config
+retrieval:
+  top_k: 10
+  max_chunks_per_document: 4
+  rerank_depth: 20
+  document_diversity_min: 3
+  keyword_search_enabled: true
