@@ -52,6 +52,24 @@ function MetricCard({
     );
 }
 
+const VERDICT_STYLES: Record<string, string> = {
+    PASS: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+    FAIL: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+    REVIEW_REQUIRED:
+        'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+};
+
+function VerdictBadge({ verdict }: { verdict: string }) {
+    const label = verdict === 'REVIEW_REQUIRED' ? 'Review' : verdict;
+    return (
+        <span
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${VERDICT_STYLES[verdict] ?? VERDICT_STYLES.REVIEW_REQUIRED}`}
+        >
+            {label}
+        </span>
+    );
+}
+
 function ResultRow({ result }: { result: EvalResult }) {
     const [expanded, setExpanded] = useState(false);
 
@@ -64,6 +82,9 @@ function ResultRow({ result }: { result: EvalResult }) {
                 <div className="flex-1">
                     <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{result.question}</span>
+                        {result.verdict && (
+                            <VerdictBadge verdict={result.verdict} />
+                        )}
                         {result.is_hallucination && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
                                 <AlertTriangle className="h-3 w-3" />
@@ -223,6 +244,23 @@ function EvalRunDetailPage() {
                         </span>
                     </div>
                 </div>
+
+                {/* Verdict summary */}
+                {run.overall_verdict && (
+                    <div className="mb-4 flex items-center gap-3 rounded-lg border bg-card p-3">
+                        <VerdictBadge verdict={run.overall_verdict} />
+                        <span className="text-sm text-muted-foreground">
+                            {run.pass_count}/{run.total_questions} questions passed
+                            {run.fail_count ? ` | ${run.fail_count} failed` : ''}
+                            {run.review_count ? ` | ${run.review_count} need review` : ''}
+                        </span>
+                        {run.profile_id && (
+                            <span className="ml-auto text-xs text-muted-foreground">
+                                Profile: {run.profile_id}
+                            </span>
+                        )}
+                    </div>
+                )}
 
                 {/* Summary metrics */}
                 <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
