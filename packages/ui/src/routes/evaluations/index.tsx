@@ -1,13 +1,14 @@
 // This project was developed with assistance from AI tools.
 
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
     useEvalRuns,
     useCreateEvalRun,
     useCancelEvalRun,
     useDeleteEvalRun,
     useSynthesizeQuestions,
+    useProfiles,
 } from '../../hooks/evaluation';
 import { useModels } from '../../hooks/models';
 import { useDocuments } from '../../hooks/documents';
@@ -153,17 +154,25 @@ function NewEvalForm({
 }) {
     const { data: models } = useModels();
     const { data: questionSets } = useQuestionSets();
+    const { data: profiles } = useProfiles();
     const createMutation = useCreateEvalRun();
     const synthesizeMutation = useSynthesizeQuestions();
     const saveSetMutation = useCreateQuestionSet();
     const deleteSetMutation = useDeleteQuestionSet();
     const [selectedModel, setSelectedModel] = useState('');
+    const [selectedProfile, setSelectedProfile] = useState('');
     const [questions, setQuestions] = useState<EvalQuestionInput[]>(initialQuestions ?? []);
     const [newQuestion, setNewQuestion] = useState('');
     const [warningMessage, setWarningMessage] = useState('');
     const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
     const [saveSetName, setSaveSetName] = useState('');
     const [showSaveSet, setShowSaveSet] = useState(false);
+
+    useEffect(() => {
+        if (profiles && profiles.length > 0 && !selectedProfile) {
+            setSelectedProfile(profiles[0].id);
+        }
+    }, [profiles, selectedProfile]);
 
     const addQuestion = () => {
         const trimmed = newQuestion.trim();
@@ -198,7 +207,7 @@ function NewEvalForm({
     const handleSubmit = () => {
         if (!selectedModel || questions.length === 0) return;
         createMutation.mutate(
-            { modelName: selectedModel, questions, questionSetId: loadedSetId },
+            { modelName: selectedModel, questions, questionSetId: loadedSetId, profileId: selectedProfile || undefined },
             {
                 onSuccess: (data) => {
                     if (data.message.includes('Warning')) {
@@ -233,6 +242,29 @@ function NewEvalForm({
                     ))}
                 </select>
             </div>
+
+            {profiles && profiles.length > 0 && (
+                <div className="mb-4">
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                        Evaluation Profile
+                    </label>
+                    <select
+                        value={selectedProfile}
+                        onChange={(e) => setSelectedProfile(e.target.value)}
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                    >
+                        <option value="">No profile (raw metric comparison)</option>
+                        {profiles.map((p) => (
+                            <option key={p.id} value={p.id}>
+                                {p.id} -- {p.description || p.domain}
+                            </option>
+                        ))}
+                    </select>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Profiles define pass/fail thresholds and disqualification gates for comparison verdicts.
+                    </p>
+                </div>
+            )}
 
             <div className="mb-4">
                 <div className="mb-1.5 flex items-center justify-between">

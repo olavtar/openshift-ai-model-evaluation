@@ -53,9 +53,45 @@ async def test_score_result_skips_when_no_judge_model_name():
             question="What is AI?",
             answer="AI is artificial intelligence.",
             contexts=["AI stands for artificial intelligence."],
+            evaluated_model_name="",
         )
 
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_score_result_uses_evaluated_model_when_no_env_judge():
+    """Should use evaluated_model_name as judge when env judge chain is empty."""
+    from src.services.scoring import score_result
+
+    mock_metric = MagicMock()
+    mock_metric.score = 0.8
+    mock_metric.a_measure = AsyncMock()
+
+    with patch("src.services.scoring.settings") as mock_settings:
+        mock_settings.API_TOKEN = "test-token"
+        mock_settings.MAAS_ENDPOINT = "https://maas.example.com"
+        mock_settings.JUDGE_MODEL_NAME = ""
+        mock_settings.MODEL_A_NAME = ""
+        mock_settings.MODEL_B_NAME = ""
+        mock_settings.resolved_judge_model_name = ""
+        mock_settings.api_token_bare = "test-token"
+
+        with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
+             patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
+             patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
+             patch("src.services.scoring._abstention_metric", return_value=mock_metric), \
+             patch("src.services.scoring.MaaSJudgeModel") as mock_judge_cls:
+            result = await score_result(
+                question="What is AI?",
+                answer="AI is artificial intelligence.",
+                contexts=["AI stands for artificial intelligence."],
+                evaluated_model_name="qwen3-14b",
+            )
+
+    mock_judge_cls.assert_called_once()
+    assert mock_judge_cls.call_args.kwargs["model_name"] == "qwen3-14b"
+    assert result.get("relevancy_score") == 0.8
 
 
 @pytest.mark.asyncio

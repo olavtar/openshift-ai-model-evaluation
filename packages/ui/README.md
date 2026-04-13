@@ -1,6 +1,13 @@
-# ai-quickstart-template UI
+# This project was developed with assistance from AI tools.
 
-React frontend application architecture and development guide.
+# Model Evaluation UI
+
+React frontend for the OpenShift AI Model Evaluation QuickStart. Features document management, evaluation runs, evaluation detail views, and model comparison with executive verdicts.
+
+Built with:
+- **React 19** + **TypeScript**
+- **TanStack Router** (file-based routing) + **TanStack Query** (server state)
+- **Tailwind CSS** + **shadcn/ui** components
 
 > **Setup & Installation**: See the [root README](../../README.md) for installation and quick start instructions.
 

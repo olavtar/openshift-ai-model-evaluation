@@ -23,6 +23,7 @@ export async function createEvalRun(
     modelName: string,
     questions: EvalQuestionInput[],
     questionSetId?: number,
+    profileId?: string,
 ): Promise<EvalRunCreateResponse> {
     const response = await fetch('/api/evaluations/', {
         method: 'POST',
@@ -31,6 +32,7 @@ export async function createEvalRun(
             model_name: modelName,
             questions,
             question_set_id: questionSetId ?? null,
+            profile_id: profileId ?? null,
         }),
     });
     if (!response.ok) throw new Error('Failed to create evaluation run');
@@ -90,6 +92,19 @@ export async function cancelEvalRun(id: number): Promise<{ message: string }> {
 export async function deleteEvalRun(id: number): Promise<void> {
     const response = await fetch(`/api/evaluations/${id}`, { method: 'DELETE' });
     if (!response.ok) throw new Error('Failed to delete evaluation run');
+}
+
+export interface EvalProfile {
+    id: string;
+    version: string;
+    domain: string;
+    description: string;
+}
+
+export async function listProfiles(): Promise<EvalProfile[]> {
+    const response = await fetch('/api/evaluations/profiles');
+    if (!response.ok) throw new Error('Failed to fetch profiles');
+    return response.json();
 }
 
 export async function synthesizeQuestions(

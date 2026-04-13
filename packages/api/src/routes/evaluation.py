@@ -14,8 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from ..schemas.evaluation import (
+    ComparisonDecision,
     ComparisonMetric,
     ComparisonResponse,
+    ComparisonWarning,
     EvalQuestion,
     EvalResultResponse,
     EvalRunCreate,
@@ -29,11 +31,16 @@ from ..schemas.evaluation import (
     SynthesizeResponse,
 )
 from ..services.generation import generate_answer
-from ..services.profiles import load_profile
+from ..services.profiles import EvalProfile, load_profile, list_profiles
 from ..services.retrieval import retrieve_chunks
 from ..services.scoring import score_result
 from ..services.synthesizer import generate_questions
-from ..services.verdicts import QuestionVerdict, compute_question_verdict, compute_run_verdict
+from ..services.verdicts import (
+    QuestionVerdict,
+    compute_comparison_decision,
+    compute_question_verdict,
+    compute_run_verdict,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +57,7 @@ class _QuestionResult:
     """Result of processing a single evaluation question."""
 
     question: str
+    expected_answer: str | None = None
     answer: str | None = None
     contexts_str: str | None = None
     latency_ms: float = 0.0
@@ -80,7 +88,7 @@ async def _process_question(
 
     question = q_item.question
     expected_answer = q_item.expected_answer
-    result = _QuestionResult(question=question)
+    result = _QuestionResult(question=question, expected_answer=expected_answer)
 
     async with semaphore:
         if eval_run_id in _cancelled_runs:
@@ -88,9 +96,23 @@ async def _process_question(
 
         start = time.time()
         try:
+            # Build retrieval kwargs from profile settings
+            retrieval_kwargs: dict = {}
+            if profile and hasattr(profile, "retrieval"):
+                r = profile.retrieval
+                retrieval_kwargs = {
+                    "top_k": r.top_k,
+                    "max_per_doc": r.max_chunks_per_document,
+                    "rerank_depth": r.rerank_depth,
+                    "diversity_min": r.document_diversity_min,
+                    "keyword_enabled": r.keyword_search_enabled,
+                }
+
             # Each concurrent question gets its own session for retrieval
             async with SessionLocal() as retrieval_session:
-                chunks = await retrieve_chunks(query=question, session=retrieval_session)
+                chunks = await retrieve_chunks(
+                    query=question, session=retrieval_session, **retrieval_kwargs
+                )
 
             if eval_run_id in _cancelled_runs:
                 return result
@@ -125,12 +147,13 @@ async def _process_question(
             if eval_run_id in _cancelled_runs:
                 return result
 
-            if gen_result["answer"] and context_texts:
+            if gen_result["answer"]:
                 result.scores = await score_result(
                     question=question,
                     answer=gen_result["answer"],
                     contexts=context_texts,
                     expected_answer=expected_answer,
+                    evaluated_model_name=model_name,
                 )
 
             # Compute per-question verdict if profile is loaded
@@ -216,21 +239,21 @@ async def _run_evaluation(
                 else:
                     eval_result = EvalResult(
                         eval_run_id=eval_run_id,
-                        question=question,
-                        expected_answer=expected_answer,
-                        answer=result["answer"],
-                        contexts=contexts_str,
-                        latency_ms=latency,
-                        relevancy_score=scores.get("relevancy_score"),
-                        groundedness_score=scores.get("groundedness_score"),
-                        context_precision_score=scores.get("context_precision_score"),
-                        context_relevancy_score=scores.get("context_relevancy_score"),
-                        completeness_score=scores.get("completeness_score"),
-                        correctness_score=scores.get("correctness_score"),
-                        compliance_accuracy_score=scores.get("compliance_accuracy_score"),
-                        abstention_score=scores.get("abstention_score"),
-                        is_hallucination=scores.get("is_hallucination"),
-                        total_tokens=tokens,
+                        question=qr.question,
+                        expected_answer=qr.expected_answer,
+                        answer=qr.answer,
+                        contexts=qr.contexts_str,
+                        latency_ms=qr.latency_ms,
+                        relevancy_score=qr.scores.get("relevancy_score"),
+                        groundedness_score=qr.scores.get("groundedness_score"),
+                        context_precision_score=qr.scores.get("context_precision_score"),
+                        context_relevancy_score=qr.scores.get("context_relevancy_score"),
+                        completeness_score=qr.scores.get("completeness_score"),
+                        correctness_score=qr.scores.get("correctness_score"),
+                        compliance_accuracy_score=qr.scores.get("compliance_accuracy_score"),
+                        abstention_score=qr.scores.get("abstention_score"),
+                        is_hallucination=qr.scores.get("is_hallucination"),
+                        total_tokens=qr.tokens,
                     )
 
                     if qr.verdict:
@@ -355,6 +378,7 @@ async def create_eval_run(
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=request.question_set_id,
+        profile_id=request.profile_id,
         status="pending",
         total_questions=len(normalized),
     )
@@ -381,11 +405,6 @@ async def create_eval_run(
     model_cfg = settings.get_model_config(request.model_name)
     if not model_cfg["token"]:
         message += f". Warning: No API token configured for {request.model_name}."
-    elif not settings.resolved_judge_model_name:
-        message += (
-            ". Warning: No judge model name (JUDGE_MODEL_NAME or MODEL_A_NAME); "
-            "faithfulness and related metrics will be skipped."
-        )
 
     return EvalRunCreateResponse(
         eval_run_id=run_id,
@@ -450,6 +469,25 @@ async def cancel_eval_run(
         _cancelled_runs.discard(eval_run_id)
 
     return {"message": f"Cancellation requested for evaluation run #{eval_run_id}"}
+
+
+@router.get("/profiles")
+async def get_profiles() -> list[dict]:
+    """List available evaluation profiles."""
+    profile_ids = list_profiles()
+    result = []
+    for pid in profile_ids:
+        try:
+            p = load_profile(pid)
+            result.append({
+                "id": p.id,
+                "version": p.version,
+                "domain": p.domain,
+                "description": p.description,
+            })
+        except Exception:
+            result.append({"id": pid, "version": "", "domain": "", "description": ""})
+    return result
 
 
 @router.post("/synthesize", response_model=SynthesizeResponse)
@@ -577,6 +615,22 @@ def _compare_metric(
     return ComparisonMetric(metric=name, run_a=val_a, run_b=val_b, winner=winner)
 
 
+def _load_comparison_profile(run_a: EvalRun, run_b: EvalRun) -> EvalProfile | None:
+    """Try to load a profile for comparison gates.
+
+    Prefers run_a's profile; falls back to run_b's.
+    Returns None if neither run has a profile or loading fails.
+    """
+    profile_id = run_a.profile_id or run_b.profile_id
+    if not profile_id:
+        return None
+    try:
+        return load_profile(profile_id)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning("Could not load profile '%s' for comparison: %s", profile_id, exc)
+        return None
+
+
 @router.get("/compare", response_model=ComparisonResponse)
 async def compare_eval_runs(
     run_a_id: int,
@@ -662,11 +716,82 @@ async def compare_eval_runs(
             )
         )
 
+    run_a_resp = _build_run_response(run_a)
+    run_b_resp = _build_run_response(run_b)
+
+    # --- Precondition warnings (Step 7) ---
+    warnings: list[ComparisonWarning] = []
+    if run_a.profile_id != run_b.profile_id:
+        warnings.append(
+            ComparisonWarning(
+                code="PROFILE_MISMATCH",
+                message=(
+                    f"Runs use different profiles: "
+                    f"{run_a.profile_id or 'none'} vs {run_b.profile_id or 'none'}"
+                ),
+            )
+        )
+    if run_a.question_set_id != run_b.question_set_id:
+        warnings.append(
+            ComparisonWarning(
+                code="QUESTION_SET_MISMATCH",
+                message="Runs use different question sets",
+            )
+        )
+    # Judge model and corpus snapshot are not stored on the run yet;
+    # flag that they cannot be verified.
+    if not run_a.profile_id and not run_b.profile_id:
+        warnings.append(
+            ComparisonWarning(
+                code="NO_PROFILE",
+                message="Neither run has a profile; verdict and gate checks are skipped",
+            )
+        )
+
+    # --- Comparison decision (Steps 1-3) ---
+    profile = _load_comparison_profile(run_a, run_b)
+    metric_winners = [(m.metric, m.winner) for m in metrics]
+
+    decision_result = compute_comparison_decision(
+        run_a_data={
+            "model_name": run_a.model_name,
+            "overall_verdict": run_a.overall_verdict,
+            "fail_count": run_a.fail_count or 0,
+            "review_count": run_a.review_count or 0,
+            "avg_completeness": run_a.avg_completeness,
+            "avg_correctness": run_a.avg_correctness,
+            "avg_compliance_accuracy": run_a.avg_compliance_accuracy,
+        },
+        run_b_data={
+            "model_name": run_b.model_name,
+            "overall_verdict": run_b.overall_verdict,
+            "fail_count": run_b.fail_count or 0,
+            "review_count": run_b.review_count or 0,
+            "avg_completeness": run_b.avg_completeness,
+            "avg_correctness": run_b.avg_correctness,
+            "avg_compliance_accuracy": run_b.avg_compliance_accuracy,
+        },
+        metric_winners=metric_winners,
+        profile=profile,
+    )
+
+    decision = ComparisonDecision(
+        winner=decision_result.winner,
+        winner_name=decision_result.winner_name,
+        decision_status=decision_result.decision_status,
+        reason_codes=decision_result.reason_codes,
+        summary=decision_result.summary,
+        risk_flags=decision_result.risk_flags,
+        disqualified=decision_result.disqualified,
+    )
+
     return ComparisonResponse(
-        run_a=_build_run_response(run_a),
-        run_b=_build_run_response(run_b),
+        run_a=run_a_resp,
+        run_b=run_b_resp,
         metrics=metrics,
         questions=questions,
+        decision=decision,
+        warnings=warnings,
     )
 
 

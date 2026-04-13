@@ -10,6 +10,7 @@ import {
     rerunEval,
     compareEvalRuns,
     synthesizeQuestions,
+    listProfiles,
     type EvalQuestionInput,
 } from '../services/evaluation';
 import type { EvalRun } from '../schemas/evaluation';
@@ -44,14 +45,23 @@ export function useCreateEvalRun() {
             modelName,
             questions,
             questionSetId,
+            profileId,
         }: {
             modelName: string;
             questions: EvalQuestionInput[];
             questionSetId?: number;
-        }) => createEvalRun(modelName, questions, questionSetId),
+            profileId?: string;
+        }) => createEvalRun(modelName, questions, questionSetId, profileId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['eval-runs'] });
         },
+    });
+}
+
+export function useProfiles() {
+    return useQuery({
+        queryKey: ['eval-profiles'],
+        queryFn: listProfiles,
     });
 }
 
