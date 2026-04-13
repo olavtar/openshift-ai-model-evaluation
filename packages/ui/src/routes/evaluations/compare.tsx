@@ -301,101 +301,14 @@ function ComparisonHistory() {
     );
 }
 
-// Compliance-relevant metrics for the "safer compliance candidate" tag
-const COMPLIANCE_METRICS = new Set([
-    'groundedness',
-    'compliance_accuracy',
-    'completeness',
-    'abstention',
-]);
-
-interface ExecutiveVerdict {
-    winner: 'run_a' | 'run_b' | 'tie';
-    winnerName: string;
-    tags: string[];
-    explanation: string;
-}
-
-function computeExecutiveVerdict(data: ComparisonResponse): ExecutiveVerdict {
-    const modelA = data.run_a.model_name;
-    const modelB = data.run_b.model_name;
-
-    // Count metric wins (exclude latency for overall winner -- it's operational, not quality)
-    let aWins = 0;
-    let bWins = 0;
-    const aAdvantages: string[] = [];
-    const bAdvantages: string[] = [];
-
-    for (const m of data.metrics) {
-        if (m.metric === 'latency_ms') continue;
-        if (m.winner === 'run_a') {
-            aWins++;
-            aAdvantages.push(METRIC_LABELS[m.metric] ?? m.metric);
-        } else if (m.winner === 'run_b') {
-            bWins++;
-            bAdvantages.push(METRIC_LABELS[m.metric] ?? m.metric);
-        }
-    }
-
-    const winner = aWins > bWins ? 'run_a' : bWins > aWins ? 'run_b' : 'tie';
-    const winnerName = winner === 'run_a' ? modelA : winner === 'run_b' ? modelB : 'Tie';
-
-    // Build tags
-    const tags: string[] = [];
-
-    // Check compliance safety: winner has better scores on compliance-relevant metrics
-    const complianceMetrics = data.metrics.filter((m) => COMPLIANCE_METRICS.has(m.metric));
-    const complianceWinsA = complianceMetrics.filter((m) => m.winner === 'run_a').length;
-    const complianceWinsB = complianceMetrics.filter((m) => m.winner === 'run_b').length;
-    if (winner !== 'tie') {
-        if (
-            (winner === 'run_a' && complianceWinsA >= complianceWinsB) ||
-            (winner === 'run_b' && complianceWinsB >= complianceWinsA)
-        ) {
-            tags.push('Safer compliance candidate');
-        }
-    }
-
-    // Check verdict improvements
-    const runA = data.run_a;
-    const runB = data.run_b;
-    if (winner === 'run_b' && (runB.fail_count ?? 0) < (runA.fail_count ?? 0)) {
-        tags.push('Fewer critical failures');
-    } else if (winner === 'run_a' && (runA.fail_count ?? 0) < (runB.fail_count ?? 0)) {
-        tags.push('Fewer critical failures');
-    }
-
-    // Build explanation
-    let explanation: string;
-    if (winner === 'tie') {
-        explanation = `Both models perform comparably across ${data.metrics.length} metrics with no clear winner.`;
-    } else {
-        const advantages = winner === 'run_a' ? aAdvantages : bAdvantages;
-        const parts = [
-            `${winnerName} wins because it improves ${advantages.slice(0, 3).join(', ').toLowerCase()}`,
-        ];
-
-        const loserReviewCount =
-            winner === 'run_a' ? (runB.review_count ?? 0) : (runA.review_count ?? 0);
-        const winnerReviewCount =
-            winner === 'run_a' ? (runA.review_count ?? 0) : (runB.review_count ?? 0);
-        if (winnerReviewCount < loserReviewCount) {
-            parts.push('while reducing review-required answers');
-        }
-
-        const loserFailCount =
-            winner === 'run_a' ? (runB.fail_count ?? 0) : (runA.fail_count ?? 0);
-        const winnerFailCount =
-            winner === 'run_a' ? (runA.fail_count ?? 0) : (runB.fail_count ?? 0);
-        if (winnerFailCount === 0 && loserFailCount > 0) {
-            parts.push('and eliminating critical failures in this run');
-        }
-
-        explanation = parts.join(' ') + '.';
-    }
-
-    return { winner, winnerName, tags, explanation };
-}
+const REASON_LABELS: Record<string, string> = {
+    OPPONENT_DISQUALIFIED: 'Opponent disqualified',
+    BOTH_DISQUALIFIED: 'Both disqualified',
+    BETTER_VERDICT: 'Better verdict',
+    FEWER_FAILURES: 'Fewer critical failures',
+    FEWER_REVIEWS: 'Fewer reviews needed',
+    METRIC_ADVANTAGE: 'Metric advantage',
+};
 
 function ComparisonHeader({
     data,
@@ -419,9 +332,10 @@ function ComparisonHeader({
             <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-background px-3 py-1 text-xs text-muted-foreground">
                 <GitCompareArrows className="h-3.5 w-3.5" />
                 Comparison screen
-                {profileId && <>&middot; same profile</>}
+                {profileId && data.run_a.profile_id === data.run_b.profile_id && (
+                    <>&middot; same profile</>
+                )}
                 {docCount != null && <>&middot; same docs</>}
-                &middot; same judge
             </div>
             <h1 className="mb-2 text-3xl font-bold tracking-tight">
                 {modelA} vs {modelB}
@@ -445,7 +359,50 @@ function ComparisonHeader({
 }
 
 function ExecutiveVerdictCard({ data }: { data: ComparisonResponse }) {
-    const verdict = computeExecutiveVerdict(data);
+    const decision = data.decision;
+
+    if (!decision) {
+        return (
+            <div className="mb-8 rounded-xl border bg-card p-6">
+                <h2 className="mb-1 text-lg font-semibold">Executive verdict</h2>
+                <p className="text-sm text-muted-foreground">
+                    Verdict not available.
+                </p>
+            </div>
+        );
+    }
+
+    const isTie = decision.winner === 'tie';
+    const isBothDisqualified = decision.reason_codes.includes('BOTH_DISQUALIFIED');
+    const isInconclusive = decision.decision_status === 'inconclusive' && !isTie && !isBothDisqualified;
+    const hasRisks = decision.risk_flags.length > 0;
+    const hasDisqualifications =
+        Object.values(decision.disqualified).some((reasons) => reasons.length > 0);
+
+    // Choose card color based on decision quality
+    const bgClass = isBothDisqualified
+        ? 'bg-rose-50/80 dark:bg-rose-950/20'
+        : isInconclusive
+          ? 'bg-amber-50/80 dark:bg-amber-950/20'
+          : isTie
+            ? 'bg-muted/50'
+            : 'bg-emerald-50/80 dark:bg-emerald-950/20';
+
+    const badgeClass = isBothDisqualified
+        ? 'bg-rose-600 dark:bg-rose-700'
+        : isInconclusive
+          ? 'bg-amber-600 dark:bg-amber-700'
+          : isTie
+            ? 'bg-muted-foreground'
+            : 'bg-emerald-600 dark:bg-emerald-700';
+
+    const textClass = isBothDisqualified
+        ? 'text-rose-900 dark:text-rose-200'
+        : isInconclusive
+          ? 'text-amber-900 dark:text-amber-200'
+          : isTie
+            ? 'text-muted-foreground'
+            : 'text-emerald-900 dark:text-emerald-200';
 
     return (
         <div className="mb-8 rounded-xl border bg-card p-6">
@@ -453,32 +410,100 @@ function ExecutiveVerdictCard({ data }: { data: ComparisonResponse }) {
             <p className="mb-4 text-sm text-muted-foreground">
                 Start with the business answer, not the raw metrics.
             </p>
-            <div className="rounded-lg bg-emerald-50/80 p-4 dark:bg-emerald-950/20">
+            <div className={`rounded-lg p-4 ${bgClass}`}>
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span
-                        className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium text-white ${
-                            verdict.winner === 'tie'
-                                ? 'bg-muted-foreground'
-                                : 'bg-emerald-600 dark:bg-emerald-700'
-                        }`}
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-medium text-white ${badgeClass}`}
                     >
-                        {verdict.winner === 'tie'
-                            ? 'No clear winner'
-                            : `Overall winner: ${verdict.winnerName}`}
+                        {isBothDisqualified
+                            ? 'No acceptable model'
+                            : isTie
+                              ? 'No clear winner'
+                              : isInconclusive
+                                ? 'Inconclusive'
+                                : `Overall winner: ${decision.winner_name}`}
                     </span>
-                    {verdict.tags.map((tag) => (
+                    {decision.decision_status === 'marginal' && (
+                        <span className="inline-flex items-center rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                            Marginal advantage
+                        </span>
+                    )}
+                    {decision.reason_codes.map((code) => (
                         <span
-                            key={tag}
-                            className="inline-flex items-center rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            key={code}
+                            className={`inline-flex items-center rounded-full border bg-white px-3 py-1 text-xs font-medium ${
+                                code === 'BOTH_DISQUALIFIED'
+                                    ? 'border-rose-300 text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300'
+                                    : 'border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                            }`}
                         >
-                            {tag}
+                            {REASON_LABELS[code] ?? code}
                         </span>
                     ))}
                 </div>
-                <p className="text-sm text-emerald-900 dark:text-emerald-200">
-                    {verdict.explanation}
+                <p className={`text-sm ${textClass}`}>
+                    {decision.summary}
                 </p>
             </div>
+
+            {/* Risk flags */}
+            {hasRisks && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900 dark:bg-amber-950/10">
+                    <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                        Risk flags
+                    </h3>
+                    <ul className="space-y-1">
+                        {decision.risk_flags.map((flag, i) => (
+                            <li key={i} className="text-sm text-amber-900 dark:text-amber-200">
+                                {flag}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* Disqualifications */}
+            {hasDisqualifications && (
+                <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50/50 p-3 dark:border-rose-900 dark:bg-rose-950/10">
+                    <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-rose-800 dark:text-rose-300">
+                        Disqualified from winning
+                    </h3>
+                    {Object.entries(decision.disqualified)
+                        .filter(([, reasons]) => reasons.length > 0)
+                        .map(([runKey, reasons]) => {
+                            const modelName =
+                                runKey === 'run_a'
+                                    ? data.run_a.model_name
+                                    : data.run_b.model_name;
+                            return (
+                                <div key={runKey} className="mb-1">
+                                    <span className="text-sm font-medium text-rose-900 dark:text-rose-200">
+                                        {modelName}:
+                                    </span>
+                                    <span className="ml-1 text-sm text-rose-800 dark:text-rose-300">
+                                        {reasons.join(', ')}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                </div>
+            )}
+
+            {/* Comparison warnings */}
+            {data.warnings && data.warnings.length > 0 && (
+                <div className="mt-3 rounded-lg border border-muted bg-muted/30 p-3">
+                    <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Comparison caveats
+                    </h3>
+                    <ul className="space-y-1">
+                        {data.warnings.map((w, i) => (
+                            <li key={i} className="text-sm text-muted-foreground">
+                                {w.message}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
         </div>
     );
 }

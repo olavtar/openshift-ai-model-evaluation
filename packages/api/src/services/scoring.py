@@ -33,6 +33,27 @@ logger = logging.getLogger(__name__)
 HALLUCINATION_THRESHOLD = 0.7
 
 
+def _judge_model_name_for_run(evaluated_model_name: str) -> str:
+    """Which model DeepEval calls for LLM-as-judge.
+
+    Uses the explicit env chain (JUDGE_MODEL_NAME, MODEL_A_NAME, MODEL_B_NAME).
+    Raises if no judge model is configured -- self-evaluation is not allowed.
+    """
+    name = settings.resolved_judge_model_name
+    if not name:
+        raise ValueError(
+            "No judge model configured. Set JUDGE_MODEL_NAME, MODEL_A_NAME, "
+            "or MODEL_B_NAME in the environment."
+        )
+    if name == evaluated_model_name:
+        logger.warning(
+            "Judge model (%s) is the same as the evaluated model -- "
+            "results may be biased by self-evaluation",
+            name,
+        )
+    return name
+
+
 class MaaSJudgeModel(DeepEvalBaseLLM):
     """OpenAI-compatible judge model for DeepEval, backed by MaaS endpoint."""
 
@@ -48,8 +69,18 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         if t.lower().startswith("bearer "):
             t = t[7:].strip()
         self._api_key = t
-        self._sync_client = OpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
-        self._async_client = AsyncOpenAI(base_url=self._base_url + "/v1", api_key=self._api_key)
+        self._sync_client = OpenAI(
+            base_url=self._base_url + "/v1",
+            api_key=self._api_key,
+            timeout=120.0,
+            max_retries=2,
+        )
+        self._async_client = AsyncOpenAI(
+            base_url=self._base_url + "/v1",
+            api_key=self._api_key,
+            timeout=120.0,
+            max_retries=2,
+        )
         super().__init__(model=model_name)
 
     def load_model(self):
@@ -75,10 +106,11 @@ class MaaSJudgeModel(DeepEvalBaseLLM):
         return self._model_name
 
 
-def _get_judge_model() -> DeepEvalBaseLLM:
-    """Create judge model from settings."""
+def _get_judge_model(model_name: str) -> DeepEvalBaseLLM:
+    """Create judge model for the given resolved judge / evaluated model name."""
+    logger.info("Creating judge model: %s at %s", model_name, settings.MAAS_ENDPOINT)
     return MaaSJudgeModel(
-        model_name=settings.resolved_judge_model_name,
+        model_name=model_name,
         base_url=settings.MAAS_ENDPOINT,
         api_key=settings.api_token_bare,
     )
@@ -194,6 +226,8 @@ async def score_result(
     answer: str,
     contexts: list[str],
     expected_answer: str | None = None,
+    *,
+    evaluated_model_name: str = "",
 ) -> dict:
     """Score a single RAG response using DeepEval metrics.
 
@@ -207,8 +241,10 @@ async def score_result(
     Args:
         question: The input question.
         answer: The model's generated answer.
-        contexts: Retrieved context chunks used for generation.
+        contexts: Retrieved context chunks used for generation (may be empty).
         expected_answer: Optional ground truth answer.
+        evaluated_model_name: Model under test; used as the judge LLM when no
+            JUDGE_MODEL_NAME / MODEL_A_NAME / MODEL_B_NAME is configured.
 
     Returns:
         Dict with metric scores and is_hallucination flag.
@@ -217,14 +253,15 @@ async def score_result(
         logger.warning("No API token for judge model, skipping scoring")
         return {}
 
-    if not settings.resolved_judge_model_name:
+    judge_model_name = _judge_model_name_for_run(evaluated_model_name)
+    if not judge_model_name:
         logger.warning(
-            "No judge model name configured (set JUDGE_MODEL_NAME or MODEL_A_NAME), "
-            "skipping scoring"
+            "No judge model name configured (set JUDGE_MODEL_NAME or MODEL_A_NAME, "
+            "or pass a non-empty evaluated model for the run), skipping scoring"
         )
         return {}
 
-    judge = _get_judge_model()
+    judge = _get_judge_model(judge_model_name)
 
     test_case = LLMTestCase(
         input=question,

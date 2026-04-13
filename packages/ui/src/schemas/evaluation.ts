@@ -78,11 +78,28 @@ export const QuestionComparisonSchema = z.object({
     run_b: EvalResultSchema.nullable().optional(),
 });
 
+export const ComparisonDecisionSchema = z.object({
+    winner: z.string().nullable().optional(),
+    winner_name: z.string().nullable().optional(),
+    decision_status: z.string(),
+    reason_codes: z.array(z.string()),
+    summary: z.string(),
+    risk_flags: z.array(z.string()),
+    disqualified: z.record(z.array(z.string())),
+});
+
+export const ComparisonWarningSchema = z.object({
+    code: z.string(),
+    message: z.string(),
+});
+
 export const ComparisonResponseSchema = z.object({
     run_a: EvalRunSchema,
     run_b: EvalRunSchema,
     metrics: z.array(ComparisonMetricSchema),
     questions: z.array(QuestionComparisonSchema),
+    decision: ComparisonDecisionSchema.nullable().optional(),
+    warnings: z.array(ComparisonWarningSchema).optional(),
 });
 
 export const SynthesizedQuestionSchema = z.object({
@@ -101,6 +118,8 @@ export type EvalRun = z.infer<typeof EvalRunSchema>;
 export type EvalRunDetail = z.infer<typeof EvalRunDetailSchema>;
 export type ComparisonMetric = z.infer<typeof ComparisonMetricSchema>;
 export type QuestionComparison = z.infer<typeof QuestionComparisonSchema>;
+export type ComparisonDecision = z.infer<typeof ComparisonDecisionSchema>;
+export type ComparisonWarning = z.infer<typeof ComparisonWarningSchema>;
 export type ComparisonResponse = z.infer<typeof ComparisonResponseSchema>;
 export type SynthesizedQuestion = z.infer<typeof SynthesizedQuestionSchema>;
 export type SynthesizeResponse = z.infer<typeof SynthesizeResponseSchema>;

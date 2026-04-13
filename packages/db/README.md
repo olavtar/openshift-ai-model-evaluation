@@ -1,8 +1,18 @@
-# ai-quickstart-template Database
+# This project was developed with assistance from AI tools.
 
-PostgreSQL database setup with Podman Compose and Alembic migrations.
+# Model Evaluation Database
 
-PostgreSQL database architecture and development guide.
+PostgreSQL database with pgvector for the OpenShift AI Model Evaluation QuickStart.
+
+Key models:
+- **EvalRun**: Evaluation run metadata and aggregate scores
+- **EvalResult**: Per-question metric scores
+- **Document**: Uploaded PDFs
+- **Chunk**: Text chunks with vector embeddings (pgvector)
+- **ModelConfig**: Model endpoints and parameters
+- **QuestionSet**: Evaluation question sets
+
+Schema evolution tracked via 9 Alembic migrations.
 
 > **Setup & Installation**: See the [root README](../../README.md) for installation and quick start instructions.
 
@@ -399,7 +409,7 @@ Database configuration is managed via environment variables:
 
 ```env
 # Database connection (project root .env file)
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/model-evaluation
 DB_ECHO=false  # Set to true for SQL query logging
 ```
 
@@ -419,10 +429,10 @@ postgresql+asyncpg://[user[:password]@][host[:port]][/database]
 
 The database runs in a Podman container managed from the project root:
 
-- **Service Name**: ai-quickstart-template-db
+- **Service Name**: model-evaluation-db
 - **Host**: localhost
 - **Port**: 5432
-- **Database**: ai-quickstart-template
+- **Database**: model-evaluation
 - **Username**: user
 - **Password**: password
 

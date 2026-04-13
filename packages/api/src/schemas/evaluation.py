@@ -119,6 +119,25 @@ class QuestionComparison(BaseModel):
     run_b: EvalResultResponse | None = None
 
 
+class ComparisonDecision(BaseModel):
+    """Backend-computed comparison verdict with disqualification gates."""
+
+    winner: str | None = None  # "run_a" | "run_b" | "tie"
+    winner_name: str | None = None
+    decision_status: str = "inconclusive"  # "decisive" | "marginal" | "inconclusive"
+    reason_codes: list[str] = Field(default_factory=list)
+    summary: str = ""
+    risk_flags: list[str] = Field(default_factory=list)
+    disqualified: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class ComparisonWarning(BaseModel):
+    """Warning about comparison precondition mismatch."""
+
+    code: str
+    message: str
+
+
 class ComparisonResponse(BaseModel):
     """Side-by-side comparison of two evaluation runs."""
 
@@ -126,6 +145,8 @@ class ComparisonResponse(BaseModel):
     run_b: EvalRunResponse
     metrics: list[ComparisonMetric] = []
     questions: list[QuestionComparison] = []
+    decision: ComparisonDecision | None = None
+    warnings: list[ComparisonWarning] = Field(default_factory=list)
 
 
 class SynthesizeRequest(BaseModel):

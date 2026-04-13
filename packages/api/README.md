@@ -1,6 +1,15 @@
-# ai-quickstart-template API
+# This project was developed with assistance from AI tools.
 
-FastAPI backend application architecture and development guide.
+# Model Evaluation API
+
+FastAPI backend for the OpenShift AI Model Evaluation QuickStart. Handles document ingestion, RAG retrieval, model evaluation via DeepEval, and comparison verdicts.
+
+Key routes:
+- **evaluation**: Create/compare eval runs, synthesize questions
+- **documents**: Upload/chunk/embed PDFs
+- **models**: List available models from MaaS
+- **query**: RAG chat endpoint
+- **health**: Liveness and readiness probes
 
 > **Setup & Installation**: See the [root README](../../README.md) for installation and quick start instructions.
 
@@ -28,20 +37,31 @@ Request → Router → Route Handler → Schema Validation → Business Logic �
 
 ```
 src/
-├── main.py              # FastAPI app instance, middleware, router registration
+├── main.py              # FastAPI app, middleware, router registration
 ├── core/
-│   └── config.py        # Pydantic Settings class for environment-based configuration
-├── routes/              # API route modules (one file per domain/resource)
-│   └── health.py        # Example: Health check endpoints
-├── schemas/             # Pydantic models for request/response validation
-│   └── health.py        # Example: Health response schema
-├── models/              # SQLAlchemy ORM models (when DB package is enabled)
-│   └── __init__.py       # Model exports
-└── __init__.py
-
-tests/
-├── test_health.py       # Test file matching route structure
-└── __init__.py
+│   └── config.py        # Pydantic Settings (model endpoints, tokens, etc.)
+├── routes/
+│   ├── evaluation.py    # Eval runs: create, list, compare, synthesize questions
+│   ├── documents.py     # PDF upload, chunking, embedding
+│   ├── models.py        # List available models from MaaS
+│   ├── query.py         # RAG chat endpoint
+│   └── health.py        # Liveness and readiness probes
+├── schemas/
+│   ├── evaluation.py    # EvalRun, ComparisonResponse, ComparisonDecision, etc.
+│   ├── documents.py     # Document upload/response schemas
+│   └── ...
+├── services/
+│   ├── scoring.py       # DeepEval metrics (MaaSJudgeModel)
+│   ├── verdicts.py      # Verdict computation, comparison decisions
+│   ├── retrieval.py     # Hybrid retrieval (vector + keyword)
+│   ├── generation.py    # Model answer generation
+│   ├── profiles.py      # Evaluation profile loader (YAML)
+│   ├── synthesizer.py   # Auto-generate questions from documents
+│   ├── chunking.py      # PDF text extraction and chunking
+│   └── embedding.py     # Vector embedding via MaaS
+├── profiles/
+│   └── fsi_compliance_v1.yaml  # FSI evaluation profile
+└── admin.py             # SQLAdmin configuration
 ```
 
 ### Directory Purposes
@@ -231,7 +251,7 @@ Configuration is managed through Pydantic Settings in `src/core/config.py`:
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_NAME: str = "ai-quickstart-template"
+    APP_NAME: str = "model-evaluation"
     DEBUG: bool = False
     ALLOWED_HOSTS: list[str] = ["http://localhost:5173"]
     DATABASE_URL: str = "postgresql+asyncpg://..."
