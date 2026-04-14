@@ -27,6 +27,8 @@ dependencies = [
     "ai-quickstart-template-db",
     "deepeval>=3.9.2",
     "openai",
+    "docling>=2.0.0",
+    "docling-core>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -71,6 +73,11 @@ ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
+
+[tool.uv]
+# Use CPU-only PyTorch to avoid pulling CUDA (~2GB); Docling requires torch
+extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
 "ai-quickstart-template-db" = { path = "../db", editable = true }
