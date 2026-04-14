@@ -42,3 +42,4 @@ retrieval:
   rerank_depth: 20
   document_diversity_min: 3
   keyword_search_enabled: true
+  dedup_threshold: 0.85

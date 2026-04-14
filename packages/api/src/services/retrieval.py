@@ -28,6 +28,7 @@ async def retrieve_chunks(
     rerank_depth: int = 20,
     diversity_min: int = 3,
     keyword_enabled: bool = True,
+    dedup_threshold: float = 0.85,
 ) -> list[dict]:
     """Retrieve the most relevant chunks for a query.
 
@@ -43,6 +44,8 @@ async def retrieve_chunks(
         rerank_depth: Number of RRF candidates to consider before selecting top_k.
         diversity_min: Soft target for minimum number of distinct source documents.
         keyword_enabled: Whether to include keyword search in hybrid retrieval.
+        dedup_threshold: Jaccard similarity threshold for dropping near-duplicate
+            chunks. Set to 1.0 to disable deduplication.
 
     Returns:
         List of dicts with 'id', 'text', 'source_document', 'page_number',
@@ -69,8 +72,11 @@ async def retrieve_chunks(
     else:
         merged = vector_results
 
+    # Remove near-duplicate chunks before diversity enforcement
+    deduped = _deduplicate_chunks(merged, dedup_threshold)
+
     # Apply document diversity and per-doc caps
-    final = _apply_diversity(merged, top_k, max_per_doc, diversity_min)
+    final = _apply_diversity(deduped, top_k, max_per_doc, diversity_min)
 
     return final
 
@@ -195,6 +201,56 @@ def _reciprocal_rank_fusion(
         {**chunk_map[cid], "score": round(rrf_scores[cid], 4)}
         for cid in sorted_ids
     ]
+
+
+def _deduplicate_chunks(
+    chunks: list[dict],
+    threshold: float = 0.85,
+) -> list[dict]:
+    """Remove near-duplicate chunks using word-level Jaccard similarity.
+
+    Iterates chunks in rank order (highest-ranked first). For each chunk,
+    computes Jaccard similarity against all previously kept chunks. If any
+    similarity exceeds the threshold, the chunk is dropped.
+
+    Args:
+        chunks: Ranked list of chunks (already sorted by relevance/RRF).
+        threshold: Jaccard similarity above which a chunk is considered
+            a duplicate. Set to 1.0 to disable deduplication.
+
+    Returns:
+        Filtered list with near-duplicates removed, preserving rank order.
+    """
+    if threshold >= 1.0 or len(chunks) <= 1:
+        return chunks
+
+    kept: list[dict] = []
+    kept_word_sets: list[set[str]] = []
+
+    for chunk in chunks:
+        words = set(chunk["text"].lower().split())
+        is_dup = False
+        for kept_words in kept_word_sets:
+            union = words | kept_words
+            if not union:
+                continue
+            jaccard = len(words & kept_words) / len(union)
+            if jaccard > threshold:
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(chunk)
+            kept_word_sets.append(words)
+
+    if len(kept) < len(chunks):
+        logger.debug(
+            "Dedup removed %d/%d chunks (threshold=%.2f)",
+            len(chunks) - len(kept),
+            len(chunks),
+            threshold,
+        )
+
+    return kept
 
 
 def _apply_diversity(

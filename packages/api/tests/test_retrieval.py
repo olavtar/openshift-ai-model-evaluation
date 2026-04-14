@@ -9,6 +9,7 @@ import pytest
 from src.services.embedding import EmbeddingsResult
 from src.services.retrieval import (
     _apply_diversity,
+    _deduplicate_chunks,
     _fallback_search,
     _reciprocal_rank_fusion,
     retrieve_chunks,
@@ -189,3 +190,122 @@ def test_keyword_search_returns_empty_on_exception(mock_session):
 
     result = asyncio.run(_keyword_search("test query", mock_session, limit=10))
     assert result == []
+
+
+# --- Deduplication tests ---
+
+
+def test_deduplicate_removes_identical_chunks():
+    """Should remove chunks with identical text."""
+    chunks = [
+        _chunk(1, doc="a.pdf") | {"text": "the quick brown fox jumps over the lazy dog"},
+        _chunk(2, doc="b.pdf") | {"text": "the quick brown fox jumps over the lazy dog"},
+        _chunk(3, doc="c.pdf") | {"text": "completely different text about regulations"},
+    ]
+    result = _deduplicate_chunks(chunks, threshold=0.85)
+    assert len(result) == 2
+    assert result[0]["id"] == 1
+    assert result[1]["id"] == 3
+
+
+def test_deduplicate_removes_near_duplicates():
+    """Should remove chunks that are near-duplicates above threshold."""
+    base = "the quick brown fox jumps over the lazy dog near the river bank"
+    # Change one word -- Jaccard should be high
+    variant = "the quick brown fox jumps over the lazy dog near the river shore"
+    chunks = [
+        _chunk(1) | {"text": base},
+        _chunk(2) | {"text": variant},
+        _chunk(3) | {"text": "SEC regulation filing compliance requirements for banking"},
+    ]
+    result = _deduplicate_chunks(chunks, threshold=0.7)
+    assert len(result) == 2
+    assert result[0]["id"] == 1
+    assert result[1]["id"] == 3
+
+
+def test_deduplicate_keeps_distinct_chunks():
+    """Should keep chunks below the similarity threshold."""
+    chunks = [
+        _chunk(1) | {"text": "federal banking regulations require annual compliance audits"},
+        _chunk(2) | {"text": "SEC filing deadlines are quarterly for public companies"},
+        _chunk(3) | {"text": "risk management frameworks include operational and market risk"},
+    ]
+    result = _deduplicate_chunks(chunks, threshold=0.85)
+    assert len(result) == 3
+
+
+def test_deduplicate_preserves_rank_order():
+    """Should keep higher-ranked chunks and drop lower-ranked duplicates."""
+    chunks = [
+        _chunk(10) | {"text": "important regulatory requirement for compliance"},
+        _chunk(20) | {"text": "different topic about financial markets"},
+        _chunk(30) | {"text": "important regulatory requirement for compliance"},
+    ]
+    result = _deduplicate_chunks(chunks, threshold=0.85)
+    assert [c["id"] for c in result] == [10, 20]
+
+
+def test_deduplicate_empty_input():
+    """Should return empty list for empty input."""
+    assert _deduplicate_chunks([], threshold=0.85) == []
+
+
+def test_deduplicate_single_chunk():
+    """Should return single chunk unchanged."""
+    chunks = [_chunk(1)]
+    result = _deduplicate_chunks(chunks, threshold=0.85)
+    assert len(result) == 1
+
+
+def test_deduplicate_disabled_at_threshold_one():
+    """Should skip dedup entirely when threshold is 1.0."""
+    chunks = [
+        _chunk(1) | {"text": "identical text"},
+        _chunk(2) | {"text": "identical text"},
+    ]
+    result = _deduplicate_chunks(chunks, threshold=1.0)
+    assert len(result) == 2
+
+
+def test_retrieve_chunks_hybrid_with_dedup(mock_session):
+    """Should deduplicate near-duplicate chunks in the hybrid retrieval path."""
+    import asyncio
+
+    shared_text = "the federal reserve requires banks to maintain adequate capital reserves"
+    vector_results = [
+        _chunk(1, doc="a.pdf") | {"text": shared_text},
+        _chunk(2, doc="b.pdf") | {"text": "SEC quarterly filing requirements for public companies"},
+    ]
+    keyword_results = [
+        # Same text as chunk 1, different ID (keyword search found it separately)
+        _chunk(3, doc="a.pdf") | {"text": shared_text},
+        _chunk(4, doc="c.pdf") | {"text": "FINRA rules for broker-dealer registration"},
+    ]
+
+    with (
+        patch(
+            "src.services.retrieval.generate_embeddings",
+            new_callable=AsyncMock,
+            return_value=EmbeddingsResult(vectors=[[0.1, 0.2]], error=None),
+        ),
+        patch(
+            "src.services.retrieval._vector_search",
+            new_callable=AsyncMock,
+            return_value=vector_results,
+        ),
+        patch(
+            "src.services.retrieval._keyword_search",
+            new_callable=AsyncMock,
+            return_value=keyword_results,
+        ),
+    ):
+        result = asyncio.run(
+            retrieve_chunks("test query", mock_session, top_k=5, dedup_threshold=0.85)
+        )
+
+    texts = [c["text"] for c in result]
+    # The duplicate text should appear only once
+    assert texts.count(shared_text) == 1
+    # All unique chunks should be present
+    assert len(result) == 3

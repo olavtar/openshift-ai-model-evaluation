@@ -106,6 +106,7 @@ async def _process_question(
                     "rerank_depth": r.rerank_depth,
                     "diversity_min": r.document_diversity_min,
                     "keyword_enabled": r.keyword_search_enabled,
+                    "dedup_threshold": r.dedup_threshold,
                 }
 
             # Each concurrent question gets its own session for retrieval
