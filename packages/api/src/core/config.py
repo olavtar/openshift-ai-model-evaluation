@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     SAFETY_MODEL_NAME: str = ""
     SAFETY_ENABLED: bool = True
 
+    # Document parsing
+    DOCLING_ENABLED: bool = True
+
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",
