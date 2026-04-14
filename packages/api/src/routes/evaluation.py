@@ -586,6 +586,7 @@ def _build_run_response(run: EvalRun) -> EvalRunResponse:
         avg_compliance_accuracy=run.avg_compliance_accuracy,
         avg_abstention=run.avg_abstention,
         hallucination_rate=run.hallucination_rate,
+        avg_chunk_alignment=run.avg_chunk_alignment,
         profile_id=run.profile_id,
         overall_verdict=run.overall_verdict,
         pass_count=run.pass_count,
@@ -616,6 +617,7 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         compliance_accuracy_score=r.compliance_accuracy_score,
         abstention_score=r.abstention_score,
         is_hallucination=r.is_hallucination,
+        chunk_alignment_score=r.chunk_alignment_score,
         verdict=r.verdict,
         fail_reasons=r.fail_reasons,
         total_tokens=r.total_tokens,
@@ -694,6 +696,9 @@ async def compare_eval_runs(
             "compliance_accuracy", run_a.avg_compliance_accuracy, run_b.avg_compliance_accuracy
         ),
         _compare_metric("abstention", run_a.avg_abstention, run_b.avg_abstention),
+        _compare_metric(
+            "chunk_alignment", run_a.avg_chunk_alignment, run_b.avg_chunk_alignment
+        ),
         _compare_metric(
             "hallucination_rate",
             run_a.hallucination_rate,
