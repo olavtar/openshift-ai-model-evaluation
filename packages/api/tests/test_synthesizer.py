@@ -180,3 +180,78 @@ def test_synthesize_rejects_when_no_model_configured(client, monkeypatch):
     )
     assert response.status_code == 400
     assert "question synthesis" in response.json()["detail"].lower()
+
+
+def test_synthesize_with_fsi_profile(client, _setup_db):
+    """Should use FSI domain rules when profile_id is provided."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    with _patch_httpx_synthesize([
+        {"question": "What are the SEC reporting requirements?", "expected_answer": "Quarterly."}
+    ]) as mock_httpx:
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 3, "profile_id": "fsi_compliance_v1"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    # Verify the prompt sent to the model includes FSI-specific rules
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
+    prompt_content = payload["messages"][0]["content"]
+    assert "SEC/FINRA" in prompt_content
+
+
+def test_synthesize_without_profile_uses_default_rules(client, _setup_db):
+    """Should use generic rules when no profile_id is provided."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    with _patch_httpx_synthesize([
+        {"question": "What is AI?", "expected_answer": "Artificial intelligence."}
+    ]) as mock_httpx:
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 3},
+        )
+
+    assert response.status_code == 200
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
+    prompt_content = payload["messages"][0]["content"]
+    assert "SEC/FINRA" not in prompt_content
+    assert "requirements, obligations, thresholds" in prompt_content
+
+
+def test_synthesize_with_invalid_profile_falls_back_to_default(client, _setup_db):
+    """Should use default rules when profile_id is invalid (graceful degradation)."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    with _patch_httpx_synthesize([
+        {"question": "What is AI?", "expected_answer": "Artificial intelligence."}
+    ]) as mock_httpx:
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 3, "profile_id": "nonexistent_profile"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
+    prompt_content = payload["messages"][0]["content"]
+    assert "SEC/FINRA" not in prompt_content
+    assert "requirements, obligations, thresholds" in prompt_content
+
+
+def test_domain_rules_mapping():
+    """Should have FSI-specific rules and a default fallback."""
+    from src.services.synthesizer import _DOMAIN_RULES, _DEFAULT_DOMAIN_RULES
+
+    assert "fsi" in _DOMAIN_RULES
+    assert "SEC/FINRA" in _DOMAIN_RULES["fsi"]
+    assert _DEFAULT_DOMAIN_RULES
+    assert "SEC/FINRA" not in _DEFAULT_DOMAIN_RULES

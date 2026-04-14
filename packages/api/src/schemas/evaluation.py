@@ -156,6 +156,9 @@ class SynthesizeRequest(BaseModel):
         default=None, description="Document IDs to generate from. None = all documents."
     )
     max_questions: int = Field(default=3, ge=1, le=50)
+    profile_id: str | None = Field(
+        default=None, description="Profile to use for domain-specific question generation."
+    )
 
 
 class SynthesizedQuestion(BaseModel):
