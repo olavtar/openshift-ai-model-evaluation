@@ -33,6 +33,7 @@ from ..schemas.evaluation import (
 from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, load_profile, list_profiles
 from ..services.retrieval import retrieve_chunks
+from ..services.safety import check_input_safety
 from ..services.scoring import score_result
 from ..services.synthesizer import generate_questions
 from ..services.verdicts import (
@@ -96,6 +97,17 @@ async def _process_question(
 
         start = time.time()
         try:
+            # Pre-generation safety check on question text
+            input_safety = await check_input_safety(question)
+            if not input_safety.is_safe:
+                logger.info(
+                    "Eval question blocked by safety filter (category=%s): %.80s",
+                    input_safety.category,
+                    question,
+                )
+                result.error = "Question blocked by safety filter"
+                return result
+
             # Build retrieval kwargs from profile settings
             retrieval_kwargs: dict = {}
             if profile and hasattr(profile, "retrieval"):

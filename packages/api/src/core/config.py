@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # If set, used for /evaluations/synthesize only. Otherwise MODEL_A_NAME, then JUDGE_MODEL_NAME.
     QUESTION_SYNTHESIS_MODEL_NAME: str = ""
 
+    # Safety (Llama Guard)
+    SAFETY_MODEL_NAME: str = ""
+    SAFETY_ENABLED: bool = True
+
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",
