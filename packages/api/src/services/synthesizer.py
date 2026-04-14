@@ -18,20 +18,36 @@ MAX_CONTEXTS = 50
 
 
 _SYNTHESIZE_PROMPT = """\
-You are given excerpts from regulatory and compliance documents. \
+You are given excerpts from documents. \
 Generate exactly {count} question-and-answer pairs that can ONLY be answered \
 using the information in the excerpts below. Do NOT invent facts or use outside knowledge.
 
 Rules:
 - Each question must be answerable from the provided text.
 - Each answer must quote or closely paraphrase the source text.
-- Focus on specific regulatory requirements, obligations, thresholds, and definitions.
-
+{domain_rules}
 Respond in JSON: {{"questions": [{{"question": "...", "expected_answer": "..."}}]}}
 
 --- DOCUMENT EXCERPTS ---
 {context}
 --- END EXCERPTS ---"""
+
+_DEFAULT_DOMAIN_RULES = (
+    "- Focus on specific requirements, obligations, thresholds, and definitions."
+)
+
+# Domain-specific synthesis rules keyed by profile domain.
+# When a profile is active, these replace the default rules to generate
+# questions that match the domain's evaluation criteria.
+_DOMAIN_RULES: dict[str, str] = {
+    "fsi": (
+        "- Focus on specific regulatory requirements, obligations, thresholds, and definitions.\n"
+        "- Prioritize questions about SEC/FINRA rules, compliance procedures, "
+        "supervisory obligations, and risk controls.\n"
+        "- Include questions that test whether the source correctly identifies "
+        "regulatory deadlines, reporting requirements, and escalation procedures."
+    ),
+}
 
 
 def _parse_questions_json(raw: str) -> dict:
@@ -51,6 +67,7 @@ async def generate_questions(
     session: AsyncSession,
     document_ids: list[int] | None = None,
     max_questions: int = 10,
+    domain: str = "",
 ) -> list[dict]:
     """Generate evaluation questions from ingested document chunks.
 
@@ -62,6 +79,8 @@ async def generate_questions(
         document_ids: Optional list of document IDs to filter chunks.
             If None, uses chunks from all ready documents.
         max_questions: Maximum number of questions to generate.
+        domain: Optional domain key (e.g. 'fsi') to generate
+            domain-specific questions matching the evaluation profile.
 
     Returns:
         List of dicts with 'question' and 'expected_answer' keys.
@@ -94,7 +113,10 @@ async def generate_questions(
         raise RuntimeError("No API token configured for question synthesis.")
 
     context = "\n\n".join(chunk_texts[:MAX_CONTEXTS])
-    prompt = _SYNTHESIZE_PROMPT.format(count=max_questions, context=context)
+    domain_rules = _DOMAIN_RULES.get(domain, _DEFAULT_DOMAIN_RULES) if domain else _DEFAULT_DOMAIN_RULES
+    prompt = _SYNTHESIZE_PROMPT.format(
+        count=max_questions, context=context, domain_rules=domain_rules
+    )
 
     url = f"{model_cfg['endpoint']}/v1/chat/completions"
     headers = {

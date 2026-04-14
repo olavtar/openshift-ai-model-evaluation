@@ -534,11 +534,21 @@ async def synthesize_questions(
             ),
         )
 
+    # Load profile domain for domain-specific question generation
+    domain = ""
+    if request.profile_id:
+        try:
+            profile = load_profile(request.profile_id)
+            domain = profile.domain
+        except (FileNotFoundError, ValueError) as e:
+            logger.warning("Could not load profile '%s' for synthesis: %s", request.profile_id, e)
+
     try:
         questions = await generate_questions(
             session=session,
             document_ids=request.document_ids,
             max_questions=request.max_questions,
+            domain=domain,
         )
     except Exception as e:
         logger.exception("Question synthesis failed")
