@@ -20,6 +20,7 @@ class RetrievalConfig(BaseModel):
     rerank_depth: int = 20
     document_diversity_min: int = 3
     keyword_search_enabled: bool = True
+    dedup_threshold: float = 0.85
 
 
 class EvalProfile(BaseModel):

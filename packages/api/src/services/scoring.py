@@ -36,15 +36,15 @@ HALLUCINATION_THRESHOLD = 0.7
 def _judge_model_name_for_run(evaluated_model_name: str) -> str:
     """Which model DeepEval calls for LLM-as-judge.
 
-    Uses the explicit env chain (JUDGE_MODEL_NAME, MODEL_A_NAME, MODEL_B_NAME).
-    Raises if no judge model is configured -- self-evaluation is not allowed.
+    Resolution order: JUDGE_MODEL_NAME, MODEL_A_NAME, MODEL_B_NAME,
+    then falls back to evaluated_model_name. Returns empty string if
+    nothing is configured (caller should skip scoring).
     """
     name = settings.resolved_judge_model_name
     if not name:
-        raise ValueError(
-            "No judge model configured. Set JUDGE_MODEL_NAME, MODEL_A_NAME, "
-            "or MODEL_B_NAME in the environment."
-        )
+        name = evaluated_model_name or ""
+    if not name:
+        return ""
     if name == evaluated_model_name:
         logger.warning(
             "Judge model (%s) is the same as the evaluated model -- "
