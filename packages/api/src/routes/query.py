@@ -11,6 +11,7 @@ from ..core.config import settings
 from ..schemas.query import QueryRequest, QueryResponse, SourceChunk, UsageInfo
 from ..services.generation import generate_answer
 from ..services.retrieval import retrieve_chunks
+from ..services.safety import check_input_safety, check_output_safety
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,6 +44,17 @@ async def query(
             detail=f"Invalid model name. Available: {settings.MODEL_A_NAME}, {settings.MODEL_B_NAME}",
         )
 
+    # Pre-retrieval safety check on user input
+    input_safety = await check_input_safety(request.question)
+    if not input_safety.is_safe:
+        logger.info("Query blocked by input safety filter (category=%s)", input_safety.category)
+        return QueryResponse(
+            answer="I'm unable to process this request.",
+            model=request.model_name,
+            sources=[],
+            safety_filtered=True,
+        )
+
     chunks = await retrieve_chunks(
         query=request.question,
         session=session,
@@ -54,6 +66,17 @@ async def query(
         chunks=chunks,
         model_name=request.model_name,
     )
+
+    # Post-generation safety check on model output
+    output_safety = await check_output_safety(result["answer"])
+    if not output_safety.is_safe:
+        logger.info("Response blocked by output safety filter (category=%s)", output_safety.category)
+        return QueryResponse(
+            answer="The generated response was filtered for safety.",
+            model=result["model"],
+            sources=[],
+            safety_filtered=True,
+        )
 
     sources = [
         SourceChunk(

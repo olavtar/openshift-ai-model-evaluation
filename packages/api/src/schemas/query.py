@@ -43,3 +43,4 @@ class QueryResponse(BaseModel):
     sources: list[SourceChunk]
     usage: UsageInfo | None = None
     low_confidence: bool = False
+    safety_filtered: bool = False
