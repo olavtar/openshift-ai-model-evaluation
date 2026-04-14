@@ -62,6 +62,7 @@ async def generate_answer(
     question: str,
     chunks: list[dict],
     model_name: str,
+    system_prompt: str | None = None,
 ) -> dict:
     """Generate an answer using the specified model with retrieved context.
 
@@ -69,6 +70,8 @@ async def generate_answer(
         question: The user's question.
         chunks: Retrieved context chunks from the retrieval service.
         model_name: Name of the model to use (e.g. granite-3.1-8b-instruct).
+        system_prompt: Optional override for the system prompt. When provided
+            (e.g. from an evaluation profile), replaces the default prompt.
 
     Returns:
         Dict with 'answer', 'model', 'usage' keys.
@@ -92,7 +95,7 @@ async def generate_answer(
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
         "temperature": 0.1,

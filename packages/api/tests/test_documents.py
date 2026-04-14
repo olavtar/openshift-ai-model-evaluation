@@ -4,6 +4,7 @@
 import io
 from unittest.mock import AsyncMock, patch
 
+from src.services.document_parser import ChunkData, ParseResult
 from src.services.embedding import EmbeddingsResult
 
 # --- Helpers ---
@@ -20,11 +21,11 @@ def _make_pdf_bytes() -> bytes:
     return buf.getvalue()
 
 
-def _mock_extract(pages: list[dict]):
-    """Return a patch that replaces _extract_text_from_pdf."""
+def _mock_parse(chunks: list[ChunkData], page_count: int = 1, parser: str = "pypdf"):
+    """Return a patch that replaces parse_pdf with a mock ParseResult."""
     return patch(
-        "src.routes.documents._extract_text_from_pdf",
-        return_value=pages,
+        "src.routes.documents.parse_pdf",
+        return_value=ParseResult(chunks=chunks, page_count=page_count, parser_used=parser),
     )
 
 
@@ -43,11 +44,11 @@ def _mock_no_embeddings():
 def test_upload_pdf_success(client):
     """Should upload a PDF and return document info with chunks."""
     pdf = _make_pdf_bytes()
-    mock_pages = [
-        {"page_number": 1, "text": "Page one content"},
-        {"page_number": 2, "text": "Page two content"},
+    mock_chunks = [
+        ChunkData(text="Page one content", source_document="test.pdf", page_number="1", token_count=3),
+        ChunkData(text="Page two content", source_document="test.pdf", page_number="2", token_count=3),
     ]
-    with _mock_extract(mock_pages), _mock_no_embeddings():
+    with _mock_parse(mock_chunks, page_count=2), _mock_no_embeddings():
         response = client.post(
             "/documents/upload",
             files={"file": ("test.pdf", pdf, "application/pdf")},
@@ -72,11 +73,11 @@ def test_upload_rejects_non_pdf(client):
     assert "PDF" in response.json()["detail"]
 
 
-def test_upload_handles_extraction_error(client):
-    """Should return error status when PDF extraction fails."""
+def test_upload_handles_parsing_error(client):
+    """Should return error status when PDF parsing fails."""
     pdf = _make_pdf_bytes()
     with patch(
-        "src.routes.documents._extract_text_from_pdf",
+        "src.routes.documents.parse_pdf",
         side_effect=Exception("corrupt pdf"),
     ), _mock_no_embeddings():
         response = client.post(
@@ -103,7 +104,8 @@ def test_list_documents_empty(client):
 def test_list_documents_after_upload(client):
     """Should include uploaded document in list."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
+    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
+    with _mock_parse(mock_chunks), _mock_no_embeddings():
         client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -123,7 +125,8 @@ def test_list_documents_after_upload(client):
 def test_get_document_by_id(client):
     """Should return a specific document by ID."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
+    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
+    with _mock_parse(mock_chunks), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -144,7 +147,8 @@ def test_get_document_not_found(client):
 def test_document_status(client):
     """Should return processing status for a document."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
+    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
+    with _mock_parse(mock_chunks), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -161,7 +165,8 @@ def test_document_status(client):
 def test_delete_document(client):
     """Should soft-delete a document so it no longer appears in list."""
     pdf = _make_pdf_bytes()
-    with _mock_extract([{"page_number": 1, "text": "content"}]), _mock_no_embeddings():
+    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
+    with _mock_parse(mock_chunks), _mock_no_embeddings():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},

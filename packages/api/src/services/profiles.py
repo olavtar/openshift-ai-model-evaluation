@@ -24,12 +24,13 @@ class RetrievalConfig(BaseModel):
 
 
 class EvalProfile(BaseModel):
-    """An evaluation profile defining thresholds and retrieval config."""
+    """An evaluation profile defining thresholds, retrieval config, and generation behavior."""
 
     id: str
     version: str = "1.0"
     domain: str = ""
     description: str = ""
+    system_prompt: str = ""
     answer_contract: list[str] = Field(default_factory=list)
     thresholds: dict[str, float] = Field(default_factory=dict)
     critical_thresholds: dict[str, float] = Field(default_factory=dict)

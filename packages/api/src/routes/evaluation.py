@@ -130,10 +130,16 @@ async def _process_question(
             if eval_run_id in _cancelled_runs:
                 return result
 
+            profile_prompt = (
+                profile.system_prompt
+                if profile and hasattr(profile, "system_prompt") and profile.system_prompt
+                else None
+            )
             gen_result = await generate_answer(
                 question=question,
                 chunks=chunks,
                 model_name=model_name,
+                system_prompt=profile_prompt,
             )
             result.latency_ms = (time.time() - start) * 1000
             result.answer = gen_result["answer"]
@@ -497,6 +503,7 @@ async def get_profiles() -> list[dict]:
                 "version": p.version,
                 "domain": p.domain,
                 "description": p.description,
+                "has_system_prompt": bool(p.system_prompt),
             })
         except Exception:
             result.append({"id": pid, "version": "", "domain": "", "description": ""})
