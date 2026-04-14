@@ -1,7 +1,6 @@
 # This project was developed with assistance from AI tools.
 """Document management endpoints -- upload, list, and status."""
 
-import io
 import logging
 import os
 from datetime import UTC, datetime
@@ -16,29 +15,13 @@ from ..schemas.documents import (
     DocumentStatusResponse,
     DocumentUploadResponse,
 )
-from ..services.chunking import section_chunk_text
+from ..services.document_parser import parse_pdf
 from ..services.embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-
-
-def _extract_text_from_pdf(content: bytes) -> list[dict]:
-    """Extract text from a PDF file, returning a list of page dicts.
-
-    Each dict has 'page_number' (1-based) and 'text'.
-    """
-    from pypdf import PdfReader
-
-    reader = PdfReader(io.BytesIO(content))
-    pages = []
-    for i, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if text.strip():
-            pages.append({"page_number": i, "text": text.strip()})
-    return pages
 
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
@@ -77,11 +60,11 @@ async def upload_document(
     await session.flush()
 
     try:
-        pages = _extract_text_from_pdf(content)
+        parse_result = parse_pdf(content, safe_filename)
     except Exception as e:
-        logger.error("Failed to extract text from %s: %s", file.filename, e)
+        logger.error("Failed to parse %s: %s", file.filename, e)
         doc.status = "error"
-        doc.error_message = f"PDF extraction failed: {e}"
+        doc.error_message = f"PDF parsing failed: {e}"
         doc_id = doc.id
         doc_filename = doc.filename
         error_msg = doc.error_message
@@ -93,31 +76,21 @@ async def upload_document(
             message=error_msg,
         )
 
-    # Split page text into smaller overlapping chunks
-    all_chunks = []
-    for page in pages:
-        page_chunks = section_chunk_text(
-            text=page["text"],
-            source_document=safe_filename,
-            page_number=str(page["page_number"]),
-        )
-        all_chunks.extend(page_chunks)
-
     # Generate embeddings (returns None if unavailable)
-    chunk_texts = [c["text"] for c in all_chunks]
+    chunk_texts = [c.text for c in parse_result.chunks]
     embed_out = await generate_embeddings(chunk_texts)
     embeddings = embed_out.vectors
 
     db_chunks = []
-    for i, chunk_data in enumerate(all_chunks):
+    for i, chunk_data in enumerate(parse_result.chunks):
         chunk = Chunk(
             document_id=doc.id,
-            text=chunk_data["text"],
-            source_document=chunk_data["source_document"],
-            page_number=chunk_data["page_number"],
-            section_path=chunk_data.get("section_path"),
-            element_type="chunk",
-            token_count=chunk_data["token_count"],
+            text=chunk_data.text,
+            source_document=chunk_data.source_document,
+            page_number=chunk_data.page_number,
+            section_path=chunk_data.section_path,
+            element_type=chunk_data.element_type,
+            token_count=chunk_data.token_count,
             embedding=embeddings[i] if embeddings else None,
         )
         db_chunks.append(chunk)
@@ -125,13 +98,14 @@ async def upload_document(
     session.add_all(db_chunks)
     doc.status = "ready"
     doc.chunk_count = len(db_chunks)
-    doc.page_count = len(pages)
+    doc.page_count = parse_result.page_count
 
     # Capture values before commit (commit expires ORM attributes in async context)
     doc_id = doc.id
     doc_filename = doc.filename
     num_chunks = len(db_chunks)
-    num_pages = len(pages)
+    num_pages = parse_result.page_count
+    parser = parse_result.parser_used
     await session.commit()
 
     embed_status = "with embeddings" if embeddings else "without embeddings"
@@ -139,7 +113,7 @@ async def upload_document(
         document_id=doc_id,
         filename=doc_filename,
         status="ready",
-        message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status})",
+        message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status}, parser: {parser})",
         embedding_error=embed_out.error,
     )
 

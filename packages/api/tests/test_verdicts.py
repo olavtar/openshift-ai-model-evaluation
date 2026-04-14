@@ -43,6 +43,20 @@ def test_load_fsi_compliance_profile():
     assert profile.retrieval.top_k == 10
 
 
+def test_fsi_profile_has_system_prompt():
+    """Should include a domain-specific system prompt in the FSI profile."""
+    profile = load_profile("fsi_compliance_v1")
+    assert profile.system_prompt
+    assert "compliance" in profile.system_prompt.lower()
+    assert "financial" in profile.system_prompt.lower() or "SEC" in profile.system_prompt
+
+
+def test_profile_system_prompt_defaults_empty():
+    """Should default system_prompt to empty string when not specified."""
+    profile = EvalProfile(id="minimal")
+    assert profile.system_prompt == ""
+
+
 def test_load_profile_not_found():
     """Should raise FileNotFoundError for unknown profile."""
     with pytest.raises(FileNotFoundError, match="nonexistent"):
