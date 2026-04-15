@@ -221,6 +221,52 @@ def _abstention_metric(judge: DeepEvalBaseLLM) -> GEval:
     )
 
 
+def compute_chunk_alignment(
+    retrieved_chunks: list[dict],
+    expected_chunks: list[str],
+) -> float:
+    """Score how well retrieved chunks match expected source chunks.
+
+    Deterministic recall metric -- no LLM call required. Each expected chunk
+    is a reference string like ``"filename.pdf"`` or ``"filename.pdf:3"``.
+    A retrieved chunk matches if its ``source_document`` matches the filename
+    and, when a page is specified, its ``page_number`` also matches.
+
+    Args:
+        retrieved_chunks: Chunks from retrieval, each with ``source_document``
+            and optionally ``page_number``.
+        expected_chunks: Expected chunk references (``"file"`` or ``"file:page"``).
+
+    Returns:
+        Recall score between 0.0 and 1.0 (matched / expected).
+    """
+    if not expected_chunks:
+        return 1.0
+
+    # Build set of (source_document, page_number|None) from retrieved chunks
+    retrieved_set: set[tuple[str, str | None]] = set()
+    retrieved_docs: set[str] = set()
+    for chunk in retrieved_chunks:
+        doc = chunk.get("source_document", "")
+        page = str(chunk["page_number"]) if chunk.get("page_number") else None
+        retrieved_set.add((doc, page))
+        retrieved_docs.add(doc)
+
+    matched = 0
+    for ref in expected_chunks:
+        if ":" in ref:
+            doc, page = ref.rsplit(":", 1)
+            # Match on both document and page
+            if (doc, page) in retrieved_set:
+                matched += 1
+        else:
+            # Match on document name only
+            if ref in retrieved_docs:
+                matched += 1
+
+    return matched / len(expected_chunks)
+
+
 async def score_result(
     question: str,
     answer: str,

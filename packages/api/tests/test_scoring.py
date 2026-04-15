@@ -234,6 +234,82 @@ def test_maas_judge_model_get_model_name():
     assert judge.get_model_name() == "granite-3.1-8b-instruct"
 
 
+# --- Chunk alignment tests ---
+
+
+def test_chunk_alignment_perfect_match():
+    """Should return 1.0 when all expected chunks are retrieved."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"source_document": "report.pdf", "page_number": "3"},
+        {"source_document": "guide.pdf", "page_number": "1"},
+    ]
+    expected = ["report.pdf:3", "guide.pdf:1"]
+    assert compute_chunk_alignment(retrieved, expected) == 1.0
+
+
+def test_chunk_alignment_partial_match():
+    """Should return fraction of matched expected chunks."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"source_document": "report.pdf", "page_number": "3"},
+        {"source_document": "other.pdf", "page_number": "5"},
+    ]
+    expected = ["report.pdf:3", "guide.pdf:1"]
+    assert compute_chunk_alignment(retrieved, expected) == 0.5
+
+
+def test_chunk_alignment_no_match():
+    """Should return 0.0 when no expected chunks are retrieved."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"source_document": "other.pdf", "page_number": "1"},
+    ]
+    expected = ["report.pdf:3", "guide.pdf:1"]
+    assert compute_chunk_alignment(retrieved, expected) == 0.0
+
+
+def test_chunk_alignment_doc_only_match():
+    """Should match on document name when no page is specified in expected."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"source_document": "report.pdf", "page_number": "7"},
+    ]
+    expected = ["report.pdf"]
+    assert compute_chunk_alignment(retrieved, expected) == 1.0
+
+
+def test_chunk_alignment_empty_expected():
+    """Should return 1.0 when no expected chunks are specified."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [{"source_document": "report.pdf", "page_number": "1"}]
+    assert compute_chunk_alignment(retrieved, []) == 1.0
+
+
+def test_chunk_alignment_empty_retrieved():
+    """Should return 0.0 when nothing was retrieved but chunks were expected."""
+    from src.services.scoring import compute_chunk_alignment
+
+    assert compute_chunk_alignment([], ["report.pdf:3"]) == 0.0
+
+
+def test_chunk_alignment_mixed_format():
+    """Should handle mix of doc-only and doc:page expected chunks."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"source_document": "report.pdf", "page_number": "3"},
+        {"source_document": "guide.pdf", "page_number": None},
+    ]
+    expected = ["report.pdf:3", "guide.pdf"]
+    assert compute_chunk_alignment(retrieved, expected) == 1.0
+
+
 def test_resolved_judge_model_name_order():
     """Judge model should prefer JUDGE_MODEL_NAME, then MODEL_A_NAME, then MODEL_B_NAME."""
     from src.core.config import Settings

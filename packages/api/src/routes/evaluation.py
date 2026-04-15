@@ -34,7 +34,7 @@ from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, load_profile, list_profiles
 from ..services.retrieval import retrieve_chunks
 from ..services.safety import check_input_safety
-from ..services.scoring import score_result
+from ..services.scoring import compute_chunk_alignment, score_result
 from ..services.synthesizer import generate_questions
 from ..services.verdicts import (
     QuestionVerdict,
@@ -64,6 +64,7 @@ class _QuestionResult:
     latency_ms: float = 0.0
     tokens: int | None = None
     scores: dict = field(default_factory=dict)
+    chunk_alignment_score: float | None = None
     error: str | None = None
     verdict: QuestionVerdict | None = None
 
@@ -163,6 +164,12 @@ async def _process_question(
                     context_parts.append(f"[{header}]\n{c['text']}")
                 result.contexts_str = "\n---\n".join(context_parts)
 
+            # Compute chunk alignment if expected_chunks provided
+            if q_item.expected_chunks and chunks:
+                result.chunk_alignment_score = compute_chunk_alignment(
+                    chunks, q_item.expected_chunks
+                )
+
             if eval_run_id in _cancelled_runs:
                 return result
 
@@ -240,6 +247,7 @@ async def _run_evaluation(
             all_correctness = []
             all_compliance_accuracy = []
             all_abstention = []
+            all_chunk_alignment = []
             hallucination_count = 0
             hallucination_scored_count = 0
             question_verdicts: list[QuestionVerdict] = []
@@ -272,6 +280,7 @@ async def _run_evaluation(
                         compliance_accuracy_score=qr.scores.get("compliance_accuracy_score"),
                         abstention_score=qr.scores.get("abstention_score"),
                         is_hallucination=qr.scores.get("is_hallucination"),
+                        chunk_alignment_score=qr.chunk_alignment_score,
                         total_tokens=qr.tokens,
                     )
 
@@ -299,6 +308,8 @@ async def _run_evaluation(
                         all_compliance_accuracy.append(qr.scores["compliance_accuracy_score"])
                     if qr.scores.get("abstention_score") is not None:
                         all_abstention.append(qr.scores["abstention_score"])
+                    if qr.chunk_alignment_score is not None:
+                        all_chunk_alignment.append(qr.chunk_alignment_score)
                     if qr.scores.get("is_hallucination") is not None:
                         hallucination_scored_count += 1
                         if qr.scores["is_hallucination"]:
@@ -350,6 +361,11 @@ async def _run_evaluation(
             )
             run.avg_abstention = (
                 sum(all_abstention) / len(all_abstention) if all_abstention else None
+            )
+            run.avg_chunk_alignment = (
+                sum(all_chunk_alignment) / len(all_chunk_alignment)
+                if all_chunk_alignment
+                else None
             )
             run.hallucination_rate = (
                 hallucination_count / hallucination_scored_count
