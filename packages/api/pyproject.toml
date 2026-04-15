@@ -29,6 +29,7 @@ dependencies = [
     "openai",
     "docling>=2.0.0",
     "docling-core>=2.0.0",
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]

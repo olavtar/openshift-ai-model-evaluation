@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # Document parsing
     DOCLING_ENABLED: bool = True
 
+    # S3/MinIO ingestion
+    S3_ENDPOINT_URL: str = ""
+    S3_ACCESS_KEY: str = ""
+    S3_SECRET_KEY: str = ""
+
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",
