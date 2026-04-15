@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .admin import setup_admin
 from .core.config import settings
-from .routes import documents, evaluation, health, models, query, question_sets
+from .routes import documents, evaluation, health, ingestion, models, query, question_sets
 
 app = FastAPI(
     title="OpenShift AI Model Evaluation API",
@@ -28,6 +28,7 @@ app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(query.router, prefix="/query", tags=["query"])
 app.include_router(evaluation.router, prefix="/evaluations", tags=["evaluations"])
 app.include_router(question_sets.router, prefix="/question-sets", tags=["question-sets"])
+app.include_router(ingestion.router, prefix="/ingest", tags=["ingestion"])
 
 setup_admin(app)
 
