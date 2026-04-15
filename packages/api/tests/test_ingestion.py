@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.services.ingestion import (
+    IngestionResult,
     download_from_url,
     download_from_s3,
     process_and_store,
@@ -188,3 +189,144 @@ async def test_process_and_store_handles_parse_error(_setup_db):
 
     assert result.status == "error"
     assert "parsing failed" in result.message.lower()
+
+
+# --- Endpoint tests ---
+
+
+def _mock_ingest_url_success():
+    """Patch ingest_from_url to return a successful result."""
+    return patch(
+        "src.routes.ingestion.ingest_from_url",
+        new_callable=AsyncMock,
+        return_value=IngestionResult(
+            document_id=1,
+            filename="report.pdf",
+            status="ready",
+            message="Extracted 5 chunks from 3 pages (without embeddings, parser: pypdf)",
+            chunk_count=5,
+            page_count=3,
+        ),
+    )
+
+
+def test_ingest_url_endpoint(client):
+    """Should ingest a PDF from URL and return document details."""
+    with _mock_ingest_url_success():
+        response = client.post("/ingest/url", json={"url": "https://example.com/report.pdf"})
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["document_id"] == 1
+    assert data["filename"] == "report.pdf"
+    assert data["status"] == "ready"
+    assert data["chunk_count"] == 5
+
+
+def test_ingest_url_rejects_invalid_url(client):
+    """Should return 400 for download validation errors."""
+    with patch(
+        "src.routes.ingestion.ingest_from_url",
+        new_callable=AsyncMock,
+        side_effect=ValueError("Invalid URL: bad"),
+    ):
+        response = client.post("/ingest/url", json={"url": "bad"})
+
+    assert response.status_code == 400
+    assert "Invalid URL" in response.json()["detail"]
+
+
+def test_ingest_url_validates_empty_url(client):
+    """Should return 422 for empty URL."""
+    response = client.post("/ingest/url", json={"url": ""})
+    assert response.status_code == 422
+
+
+def test_ingest_s3_endpoint(client):
+    """Should ingest a PDF from S3 and return document details."""
+    with patch(
+        "src.routes.ingestion.ingest_from_s3",
+        new_callable=AsyncMock,
+        return_value=IngestionResult(
+            document_id=2,
+            filename="filing.pdf",
+            status="ready",
+            message="Extracted 10 chunks from 5 pages (without embeddings, parser: pypdf)",
+            chunk_count=10,
+            page_count=5,
+        ),
+    ):
+        response = client.post(
+            "/ingest/s3", json={"bucket": "my-bucket", "key": "docs/filing.pdf"}
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["document_id"] == 2
+    assert data["filename"] == "filing.pdf"
+    assert data["chunk_count"] == 10
+
+
+def test_ingest_s3_rejects_when_not_configured(client):
+    """Should return 400 when S3 is not configured."""
+    with patch(
+        "src.routes.ingestion.ingest_from_s3",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("S3 is not configured"),
+    ):
+        response = client.post(
+            "/ingest/s3", json={"bucket": "bucket", "key": "key.pdf"}
+        )
+
+    assert response.status_code == 400
+    assert "S3 is not configured" in response.json()["detail"]
+
+
+def test_ingest_batch_endpoint(client):
+    """Should ingest multiple URLs and return batch results."""
+    with _mock_ingest_url_success():
+        response = client.post(
+            "/ingest/batch",
+            json={"urls": ["https://example.com/a.pdf", "https://example.com/b.pdf"]},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["total"] == 2
+    assert data["succeeded"] == 2
+    assert data["failed"] == 0
+    assert len(data["results"]) == 2
+
+
+def test_ingest_batch_partial_failure(client):
+    """Should continue batch when individual URLs fail."""
+    call_count = 0
+
+    async def _alternate_results(url, session):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return IngestionResult(
+                document_id=1, filename="good.pdf", status="ready",
+                message="OK", chunk_count=3, page_count=1,
+            )
+        raise ValueError("Download failed")
+
+    with patch("src.routes.ingestion.ingest_from_url", side_effect=_alternate_results):
+        response = client.post(
+            "/ingest/batch",
+            json={"urls": ["https://example.com/good.pdf", "https://example.com/bad.pdf"]},
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["succeeded"] == 1
+    assert data["failed"] == 1
+    assert data["results"][0]["status"] == "ready"
+    assert data["results"][1]["status"] == "error"
+
+
+def test_ingest_batch_validates_empty_urls(client):
+    """Should return 422 for empty URL list."""
+    response = client.post("/ingest/batch", json={"urls": []})
+    assert response.status_code == 422
