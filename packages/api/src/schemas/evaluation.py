@@ -41,6 +41,7 @@ class EvalResultResponse(BaseModel):
     compliance_accuracy_score: float | None = None
     abstention_score: float | None = None
     is_hallucination: bool | None = None
+    chunk_alignment_score: float | None = None
     verdict: str | None = None
     fail_reasons: list[str] | None = None
     total_tokens: int | None = None
@@ -66,6 +67,7 @@ class EvalRunResponse(BaseModel):
     avg_compliance_accuracy: float | None = None
     avg_abstention: float | None = None
     hallucination_rate: float | None = None
+    avg_chunk_alignment: float | None = None
     profile_id: str | None = None
     overall_verdict: str | None = None
     pass_count: int | None = None
