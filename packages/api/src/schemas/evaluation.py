@@ -12,6 +12,9 @@ class EvalQuestion(BaseModel):
 
     question: str = Field(..., min_length=1)
     expected_answer: str | None = None
+    expected_chunks: list[str] | None = Field(
+        default=None, description='Expected source chunks, e.g. ["report.pdf:3", "guide.pdf"].'
+    )
 
 
 class EvalRunCreate(BaseModel):
