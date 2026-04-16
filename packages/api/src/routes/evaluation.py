@@ -31,7 +31,7 @@ from ..schemas.evaluation import (
     SynthesizeResponse,
 )
 from ..services.generation import generate_answer
-from ..services.profiles import EvalProfile, load_profile, list_profiles
+from ..services.profiles import EvalProfile, list_profiles, load_profile
 from ..services.retrieval import retrieve_chunks
 from ..services.safety import check_input_safety
 from ..services.scoring import compute_chunk_alignment, score_result
@@ -145,9 +145,7 @@ async def _process_question(
             result.latency_ms = (time.time() - start) * 1000
             result.answer = gen_result["answer"]
             result.tokens = (
-                gen_result.get("usage", {}).get("total_tokens")
-                if gen_result.get("usage")
-                else None
+                gen_result.get("usage", {}).get("total_tokens") if gen_result.get("usage") else None
             )
 
             context_texts = [c["text"] for c in chunks] if chunks else []
@@ -332,9 +330,7 @@ async def _run_evaluation(
             # Compute aggregates from whatever questions were completed
             run.avg_latency_ms = total_latency / completed if completed else None
             run.total_tokens = total_tokens_sum or None
-            run.avg_relevancy = (
-                sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
-            )
+            run.avg_relevancy = sum(all_relevancy) / len(all_relevancy) if all_relevancy else None
             run.avg_groundedness = (
                 sum(all_groundedness) / len(all_groundedness) if all_groundedness else None
             )
@@ -363,9 +359,7 @@ async def _run_evaluation(
                 sum(all_abstention) / len(all_abstention) if all_abstention else None
             )
             run.avg_chunk_alignment = (
-                sum(all_chunk_alignment) / len(all_chunk_alignment)
-                if all_chunk_alignment
-                else None
+                sum(all_chunk_alignment) / len(all_chunk_alignment) if all_chunk_alignment else None
             )
             run.hallucination_rate = (
                 hallucination_count / hallucination_scored_count
@@ -455,9 +449,7 @@ async def list_eval_runs(
     session: AsyncSession = Depends(get_db),
 ) -> list[EvalRunResponse]:
     """List all evaluation runs, most recent first."""
-    result = await session.execute(
-        select(EvalRun).order_by(EvalRun.created_at.desc())
-    )
+    result = await session.execute(select(EvalRun).order_by(EvalRun.created_at.desc()))
     runs = result.scalars().all()
     return [_build_run_response(r) for r in runs]
 
@@ -514,13 +506,15 @@ async def get_profiles() -> list[dict]:
     for pid in profile_ids:
         try:
             p = load_profile(pid)
-            result.append({
-                "id": p.id,
-                "version": p.version,
-                "domain": p.domain,
-                "description": p.description,
-                "has_system_prompt": bool(p.system_prompt),
-            })
+            result.append(
+                {
+                    "id": p.id,
+                    "version": p.version,
+                    "domain": p.domain,
+                    "description": p.description,
+                    "has_system_prompt": bool(p.system_prompt),
+                }
+            )
         except Exception:
             result.append({"id": pid, "version": "", "domain": "", "description": ""})
     return result
@@ -568,9 +562,7 @@ async def synthesize_questions(
         )
     except Exception as e:
         logger.exception("Question synthesis failed")
-        raise HTTPException(
-            status_code=500, detail=f"Question synthesis failed: {str(e)[:200]}"
-        )
+        raise HTTPException(status_code=500, detail=f"Question synthesis failed: {str(e)[:200]}")
     return SynthesizeResponse(
         questions=[
             SynthesizedQuestion(
@@ -712,9 +704,7 @@ async def compare_eval_runs(
             "compliance_accuracy", run_a.avg_compliance_accuracy, run_b.avg_compliance_accuracy
         ),
         _compare_metric("abstention", run_a.avg_abstention, run_b.avg_abstention),
-        _compare_metric(
-            "chunk_alignment", run_a.avg_chunk_alignment, run_b.avg_chunk_alignment
-        ),
+        _compare_metric("chunk_alignment", run_a.avg_chunk_alignment, run_b.avg_chunk_alignment),
         _compare_metric(
             "hallucination_rate",
             run_a.hallucination_rate,
@@ -744,9 +734,7 @@ async def compare_eval_runs(
                 if isinstance(q_item, dict) and q_item.get("expected_answer"):
                     expected_by_question.setdefault(q_item["question"], q_item["expected_answer"])
 
-    all_questions = list(
-        dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys()))
-    )
+    all_questions = list(dict.fromkeys(list(a_by_question.keys()) + list(b_by_question.keys())))
 
     questions = []
     for q in all_questions:
@@ -857,9 +845,7 @@ async def get_eval_run(
         raise HTTPException(status_code=404, detail="Evaluation run not found")
 
     results = await session.execute(
-        select(EvalResult)
-        .where(EvalResult.eval_run_id == eval_run_id)
-        .order_by(EvalResult.id)
+        select(EvalResult).where(EvalResult.eval_run_id == eval_run_id).order_by(EvalResult.id)
     )
     result_rows = results.scalars().all()
 
@@ -906,18 +892,15 @@ async def rerun_eval(
         .where(EvalResult.eval_run_id == eval_run_id)
         .order_by(EvalResult.id)
     )
-    questions = [
-        EvalQuestion(question=row[0], expected_answer=row[1])
-        for row in results.all()
-    ]
+    questions = [EvalQuestion(question=row[0], expected_answer=row[1]) for row in results.all()]
     if not questions:
-        raise HTTPException(
-            status_code=400, detail="Original run has no questions to re-run"
-        )
+        raise HTTPException(status_code=400, detail="Original run has no questions to re-run")
 
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=original_run.question_set_id,
+        profile_id=original_run.profile_id,
+        profile_version=original_run.profile_version,
         status="pending",
         total_questions=len(questions),
     )
@@ -934,6 +917,7 @@ async def rerun_eval(
         eval_run_id=run_id,
         model_name=request.model_name,
         questions=questions,
+        profile_id=original_run.profile_id,
     )
 
     await session.commit()

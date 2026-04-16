@@ -5,7 +5,6 @@ import io
 from unittest.mock import AsyncMock, patch
 
 from src.services.document_parser import ChunkData, ParseResult
-from src.services.embedding import EmbeddingsResult
 
 # --- Helpers ---
 
@@ -29,12 +28,11 @@ def _mock_parse(chunks: list[ChunkData], page_count: int = 1, parser: str = "pyp
     )
 
 
-def _mock_no_embeddings():
-    """Return a patch that skips embedding generation."""
+def _mock_bg_embed_noop():
+    """Return a patch that makes background embedding a no-op."""
     return patch(
-        "src.routes.documents.generate_embeddings",
+        "src.routes.documents._generate_embeddings_for_document",
         new_callable=AsyncMock,
-        return_value=EmbeddingsResult(vectors=None, error=None),
     )
 
 
@@ -42,13 +40,17 @@ def _mock_no_embeddings():
 
 
 def test_upload_pdf_success(client):
-    """Should upload a PDF and return document info with chunks."""
+    """Should upload a PDF and return document info with processing status."""
     pdf = _make_pdf_bytes()
     mock_chunks = [
-        ChunkData(text="Page one content", source_document="test.pdf", page_number="1", token_count=3),
-        ChunkData(text="Page two content", source_document="test.pdf", page_number="2", token_count=3),
+        ChunkData(
+            text="Page one content", source_document="test.pdf", page_number="1", token_count=3
+        ),
+        ChunkData(
+            text="Page two content", source_document="test.pdf", page_number="2", token_count=3
+        ),
     ]
-    with _mock_parse(mock_chunks, page_count=2), _mock_no_embeddings():
+    with _mock_parse(mock_chunks, page_count=2), _mock_bg_embed_noop():
         response = client.post(
             "/documents/upload",
             files={"file": ("test.pdf", pdf, "application/pdf")},
@@ -56,11 +58,10 @@ def test_upload_pdf_success(client):
 
     assert response.status_code == 201
     data = response.json()
-    assert data["status"] == "ready"
+    assert data["status"] == "processing"
     assert data["filename"] == "test.pdf"
     assert data["document_id"] >= 1
     assert "2 chunks" in data["message"]
-    assert "without embeddings" in data["message"]
 
 
 def test_upload_rejects_non_pdf(client):
@@ -79,7 +80,7 @@ def test_upload_handles_parsing_error(client):
     with patch(
         "src.routes.documents.parse_pdf",
         side_effect=Exception("corrupt pdf"),
-    ), _mock_no_embeddings():
+    ):
         response = client.post(
             "/documents/upload",
             files={"file": ("bad.pdf", pdf, "application/pdf")},
@@ -104,8 +105,10 @@ def test_list_documents_empty(client):
 def test_list_documents_after_upload(client):
     """Should include uploaded document in list."""
     pdf = _make_pdf_bytes()
-    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
-    with _mock_parse(mock_chunks), _mock_no_embeddings():
+    mock_chunks = [
+        ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)
+    ]
+    with _mock_parse(mock_chunks), _mock_bg_embed_noop():
         client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -116,7 +119,7 @@ def test_list_documents_after_upload(client):
     docs = response.json()
     assert len(docs) == 1
     assert docs[0]["filename"] == "doc.pdf"
-    assert docs[0]["status"] == "ready"
+    assert docs[0]["status"] == "processing"
 
 
 # --- Get / Status / Delete tests ---
@@ -125,8 +128,10 @@ def test_list_documents_after_upload(client):
 def test_get_document_by_id(client):
     """Should return a specific document by ID."""
     pdf = _make_pdf_bytes()
-    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
-    with _mock_parse(mock_chunks), _mock_no_embeddings():
+    mock_chunks = [
+        ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)
+    ]
+    with _mock_parse(mock_chunks), _mock_bg_embed_noop():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -147,8 +152,10 @@ def test_get_document_not_found(client):
 def test_document_status(client):
     """Should return processing status for a document."""
     pdf = _make_pdf_bytes()
-    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
-    with _mock_parse(mock_chunks), _mock_no_embeddings():
+    mock_chunks = [
+        ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)
+    ]
+    with _mock_parse(mock_chunks), _mock_bg_embed_noop():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},
@@ -158,15 +165,17 @@ def test_document_status(client):
     response = client.get(f"/documents/{doc_id}/status")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ready"
+    assert data["status"] == "processing"
     assert data["chunk_count"] == 1
 
 
 def test_delete_document(client):
     """Should soft-delete a document so it no longer appears in list."""
     pdf = _make_pdf_bytes()
-    mock_chunks = [ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)]
-    with _mock_parse(mock_chunks), _mock_no_embeddings():
+    mock_chunks = [
+        ChunkData(text="content", source_document="doc.pdf", page_number="1", token_count=1)
+    ]
+    with _mock_parse(mock_chunks), _mock_bg_embed_noop():
         upload = client.post(
             "/documents/upload",
             files={"file": ("doc.pdf", pdf, "application/pdf")},

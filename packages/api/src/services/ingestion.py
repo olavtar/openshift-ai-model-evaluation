@@ -8,11 +8,11 @@ from urllib.parse import urlparse
 
 import httpx
 from db import Chunk, Document
+from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from .document_parser import parse_pdf
-from .embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class IngestionResult:
 
     document_id: int
     filename: str
-    status: str  # "ready" | "error"
+    status: str  # "processing" | "ready" | "error"
     message: str
     chunk_count: int = 0
     page_count: int | None = None
@@ -93,7 +93,9 @@ async def download_from_s3(bucket: str, key: str) -> tuple[bytes, str]:
         import boto3
         from botocore.config import Config as BotoConfig
     except ImportError as e:
-        raise RuntimeError("boto3 is required for S3 ingestion. Install it with: pip install boto3") from e
+        raise RuntimeError(
+            "boto3 is required for S3 ingestion. Install it with: pip install boto3"
+        ) from e
 
     s3_client = boto3.client(
         "s3",
@@ -123,15 +125,18 @@ async def process_and_store(
     content: bytes,
     filename: str,
     session: AsyncSession,
+    background_tasks: BackgroundTasks,
 ) -> IngestionResult:
-    """Parse a PDF, generate embeddings, and store in the database.
+    """Parse a PDF, store chunks, and queue embedding generation.
 
-    This is the shared pipeline used by both file upload and URL/S3 ingestion.
+    Chunks are stored without embeddings. Embedding generation runs in a
+    serialized background task (shared semaphore with document upload).
 
     Args:
         content: Raw PDF bytes.
         filename: Filename to store.
         session: Database session.
+        background_tasks: FastAPI background tasks for embedding work.
 
     Returns:
         IngestionResult with document details.
@@ -161,12 +166,8 @@ async def process_and_store(
             message=doc.error_message,
         )
 
-    chunk_texts = [c.text for c in parse_result.chunks]
-    embed_out = await generate_embeddings(chunk_texts)
-    embeddings = embed_out.vectors
-
     db_chunks = []
-    for i, chunk_data in enumerate(parse_result.chunks):
+    for chunk_data in parse_result.chunks:
         chunk = Chunk(
             document_id=doc.id,
             text=chunk_data.text,
@@ -175,12 +176,11 @@ async def process_and_store(
             section_path=chunk_data.section_path,
             element_type=chunk_data.element_type,
             token_count=chunk_data.token_count,
-            embedding=embeddings[i] if embeddings else None,
+            embedding=None,
         )
         db_chunks.append(chunk)
 
     session.add_all(db_chunks)
-    doc.status = "ready"
     doc.chunk_count = len(db_chunks)
     doc.page_count = parse_result.page_count
 
@@ -190,42 +190,59 @@ async def process_and_store(
     parser = parse_result.parser_used
     await session.commit()
 
-    embed_status = "with embeddings" if embeddings else "without embeddings"
+    # Queue embedding generation (serialized via shared semaphore)
+    from ..routes.documents import _generate_embeddings_for_document
+
+    background_tasks.add_task(_generate_embeddings_for_document, doc_id)
+
     return IngestionResult(
         document_id=doc_id,
         filename=safe_filename,
-        status="ready",
-        message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status}, parser: {parser})",
+        status="processing",
+        message=(
+            f"Parsed {num_chunks} chunks from {num_pages} pages (parser: {parser}). "
+            "Embedding generation in progress."
+        ),
         chunk_count=num_chunks,
         page_count=num_pages,
-        embedding_error=embed_out.error,
     )
 
 
-async def ingest_from_url(url: str, session: AsyncSession) -> IngestionResult:
+async def ingest_from_url(
+    url: str,
+    session: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> IngestionResult:
     """Download a PDF from a URL and ingest it.
 
     Args:
         url: URL to download from.
         session: Database session.
+        background_tasks: FastAPI background tasks.
 
     Returns:
         IngestionResult with document details.
     """
     content, filename = await download_from_url(url)
-    return await process_and_store(content, filename, session)
+    return await process_and_store(content, filename, session, background_tasks)
 
 
-async def ingest_from_s3(bucket: str, key: str, session: AsyncSession) -> IngestionResult:
+async def ingest_from_s3(
+    bucket: str,
+    key: str,
+    session: AsyncSession,
+    background_tasks: BackgroundTasks,
+) -> IngestionResult:
     """Download a PDF from S3/MinIO and ingest it.
 
     Args:
         bucket: S3 bucket name.
         key: Object key within the bucket.
         session: Database session.
+        background_tasks: FastAPI background tasks.
 
     Returns:
         IngestionResult with document details.
     """
     content, filename = await download_from_s3(bucket, key)
-    return await process_and_store(content, filename, session)
+    return await process_and_store(content, filename, session, background_tasks)

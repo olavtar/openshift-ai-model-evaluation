@@ -37,9 +37,7 @@ def test_fallback_search_returns_chunks(mock_session):
     """Should return recent chunks when vector search is unavailable."""
     mock_rows = [
         Row(id=1, text="chunk one", source_document="doc.pdf", page_number="1", section_path=None),
-        Row(
-            id=2, text="chunk two", source_document="doc.pdf", page_number="2", section_path=None
-        ),
+        Row(id=2, text="chunk two", source_document="doc.pdf", page_number="2", section_path=None),
     ]
     mock_session.execute.return_value = _make_mock_result(mock_rows)
 

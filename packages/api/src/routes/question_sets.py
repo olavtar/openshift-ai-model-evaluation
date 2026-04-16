@@ -57,9 +57,7 @@ async def list_question_sets(
     session: AsyncSession = Depends(get_db),
 ) -> list[QuestionSetResponse]:
     """List all saved question sets, most recent first."""
-    result = await session.execute(
-        select(QuestionSet).order_by(QuestionSet.created_at.desc())
-    )
+    result = await session.execute(select(QuestionSet).order_by(QuestionSet.created_at.desc()))
     return [_build_response(qs) for qs in result.scalars().all()]
 
 

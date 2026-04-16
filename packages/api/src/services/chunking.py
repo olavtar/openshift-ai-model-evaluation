@@ -163,13 +163,13 @@ def section_chunk_text(
         if not body_text.strip():
             continue
 
-        sub_chunks = chunk_text(
-            body_text, source_document, page_number, chunk_size, chunk_overlap
-        )
+        sub_chunks = chunk_text(body_text, source_document, page_number, chunk_size, chunk_overlap)
         for chunk in sub_chunks:
             chunk["section_path"] = heading
         result.extend(sub_chunks)
 
-    return result if result else chunk_text(
-        text, source_document, page_number, chunk_size, chunk_overlap
+    return (
+        result
+        if result
+        else chunk_text(text, source_document, page_number, chunk_size, chunk_overlap)
     )

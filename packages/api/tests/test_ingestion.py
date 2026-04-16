@@ -1,19 +1,18 @@
 # This project was developed with assistance from AI tools.
 """Tests for document ingestion service."""
 
-import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import BackgroundTasks
 
 from src.services.ingestion import (
     IngestionResult,
-    download_from_url,
     download_from_s3,
+    download_from_url,
     process_and_store,
 )
-
 
 # Minimal valid PDF header for validation tests
 _VALID_PDF = b"%PDF-1.4 fake content"
@@ -139,7 +138,7 @@ async def test_download_s3_returns_content_and_filename():
 
 @pytest.mark.asyncio
 async def test_process_and_store_success(_setup_db):
-    """Should parse, embed, and store a document successfully."""
+    """Should parse and store a document with processing status."""
     _, async_session = _setup_db
 
     @dataclass
@@ -162,17 +161,16 @@ async def test_process_and_store_success(_setup_db):
             if self.chunks is None:
                 self.chunks = [FakeChunk()]
 
-    @dataclass
-    class FakeEmbedOut:
-        vectors: list = None
-        error: str | None = None
+    bg_tasks = BackgroundTasks()
 
-    with patch("src.services.ingestion.parse_pdf", return_value=FakeParseResult()), \
-         patch("src.services.ingestion.generate_embeddings", new_callable=AsyncMock, return_value=FakeEmbedOut()):
+    with (
+        patch("src.services.ingestion.parse_pdf", return_value=FakeParseResult()),
+        patch("src.routes.documents._generate_embeddings_for_document", new_callable=AsyncMock),
+    ):
         async with async_session() as session:
-            result = await process_and_store(_VALID_PDF, "test.pdf", session)
+            result = await process_and_store(_VALID_PDF, "test.pdf", session, bg_tasks)
 
-    assert result.status == "ready"
+    assert result.status == "processing"
     assert result.chunk_count == 1
     assert result.document_id >= 1
     assert "1 chunks" in result.message
@@ -183,9 +181,11 @@ async def test_process_and_store_handles_parse_error(_setup_db):
     """Should return error status when parsing fails."""
     _, async_session = _setup_db
 
+    bg_tasks = BackgroundTasks()
+
     with patch("src.services.ingestion.parse_pdf", side_effect=RuntimeError("bad pdf")):
         async with async_session() as session:
-            result = await process_and_store(b"%PDF-broken", "bad.pdf", session)
+            result = await process_and_store(b"%PDF-broken", "bad.pdf", session, bg_tasks)
 
     assert result.status == "error"
     assert "parsing failed" in result.message.lower()
@@ -202,8 +202,8 @@ def _mock_ingest_url_success():
         return_value=IngestionResult(
             document_id=1,
             filename="report.pdf",
-            status="ready",
-            message="Extracted 5 chunks from 3 pages (without embeddings, parser: pypdf)",
+            status="processing",
+            message="Parsed 5 chunks from 3 pages (parser: pypdf). Embedding generation in progress.",
             chunk_count=5,
             page_count=3,
         ),
@@ -219,7 +219,7 @@ def test_ingest_url_endpoint(client):
     data = response.json()
     assert data["document_id"] == 1
     assert data["filename"] == "report.pdf"
-    assert data["status"] == "ready"
+    assert data["status"] == "processing"
     assert data["chunk_count"] == 5
 
 
@@ -250,15 +250,13 @@ def test_ingest_s3_endpoint(client):
         return_value=IngestionResult(
             document_id=2,
             filename="filing.pdf",
-            status="ready",
-            message="Extracted 10 chunks from 5 pages (without embeddings, parser: pypdf)",
+            status="processing",
+            message="Parsed 10 chunks from 5 pages (parser: pypdf). Embedding generation in progress.",
             chunk_count=10,
             page_count=5,
         ),
     ):
-        response = client.post(
-            "/ingest/s3", json={"bucket": "my-bucket", "key": "docs/filing.pdf"}
-        )
+        response = client.post("/ingest/s3", json={"bucket": "my-bucket", "key": "docs/filing.pdf"})
 
     assert response.status_code == 201
     data = response.json()
@@ -274,9 +272,7 @@ def test_ingest_s3_rejects_when_not_configured(client):
         new_callable=AsyncMock,
         side_effect=RuntimeError("S3 is not configured"),
     ):
-        response = client.post(
-            "/ingest/s3", json={"bucket": "bucket", "key": "key.pdf"}
-        )
+        response = client.post("/ingest/s3", json={"bucket": "bucket", "key": "key.pdf"})
 
     assert response.status_code == 400
     assert "S3 is not configured" in response.json()["detail"]
@@ -302,13 +298,17 @@ def test_ingest_batch_partial_failure(client):
     """Should continue batch when individual URLs fail."""
     call_count = 0
 
-    async def _alternate_results(url, session):
+    async def _alternate_results(url, session, background_tasks):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             return IngestionResult(
-                document_id=1, filename="good.pdf", status="ready",
-                message="OK", chunk_count=3, page_count=1,
+                document_id=1,
+                filename="good.pdf",
+                status="processing",
+                message="OK",
+                chunk_count=3,
+                page_count=1,
             )
         raise ValueError("Download failed")
 
@@ -322,7 +322,7 @@ def test_ingest_batch_partial_failure(client):
     data = response.json()
     assert data["succeeded"] == 1
     assert data["failed"] == 1
-    assert data["results"][0]["status"] == "ready"
+    assert data["results"][0]["status"] == "processing"
     assert data["results"][1]["status"] == "error"
 
 

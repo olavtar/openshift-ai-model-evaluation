@@ -4,7 +4,7 @@
 import logging
 
 from db import get_db
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..schemas.ingestion import (
@@ -23,15 +23,17 @@ router = APIRouter()
 @router.post("/url", response_model=IngestResult, status_code=201)
 async def ingest_url(
     request: IngestUrlRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ) -> IngestResult:
     """Ingest a PDF document from a URL.
 
     Downloads the PDF and processes it through the standard pipeline
-    (parse, embed, store). Same result as uploading via /documents/upload.
+    (parse, store, embed in background). Same result as uploading via
+    /documents/upload.
     """
     try:
-        result = await ingest_from_url(request.url, session)
+        result = await ingest_from_url(request.url, session, background_tasks)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -52,6 +54,7 @@ async def ingest_url(
 @router.post("/s3", response_model=IngestResult, status_code=201)
 async def ingest_s3(
     request: IngestS3Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ) -> IngestResult:
     """Ingest a PDF document from S3/MinIO.
@@ -60,7 +63,7 @@ async def ingest_s3(
     processes it through the standard pipeline.
     """
     try:
-        result = await ingest_from_s3(request.bucket, request.key, session)
+        result = await ingest_from_s3(request.bucket, request.key, session, background_tasks)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
@@ -83,6 +86,7 @@ async def ingest_s3(
 @router.post("/batch", response_model=IngestBatchResponse, status_code=201)
 async def ingest_batch(
     request: IngestBatchUrlRequest,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ) -> IngestBatchResponse:
     """Ingest multiple PDF documents from URLs.
@@ -96,7 +100,7 @@ async def ingest_batch(
 
     for url in request.urls:
         try:
-            result = await ingest_from_url(url, session)
+            result = await ingest_from_url(url, session, background_tasks)
             results.append(
                 IngestResult(
                     document_id=result.document_id,
@@ -108,7 +112,7 @@ async def ingest_batch(
                     embedding_error=result.embedding_error,
                 )
             )
-            if result.status == "ready":
+            if result.status != "error":
                 succeeded += 1
             else:
                 failed += 1

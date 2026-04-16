@@ -113,7 +113,9 @@ async def generate_questions(
         raise RuntimeError("No API token configured for question synthesis.")
 
     context = "\n\n".join(chunk_texts[:MAX_CONTEXTS])
-    domain_rules = _DOMAIN_RULES.get(domain, _DEFAULT_DOMAIN_RULES) if domain else _DEFAULT_DOMAIN_RULES
+    domain_rules = (
+        _DOMAIN_RULES.get(domain, _DEFAULT_DOMAIN_RULES) if domain else _DEFAULT_DOMAIN_RULES
+    )
     prompt = _SYNTHESIZE_PROMPT.format(
         count=max_questions, context=context, domain_rules=domain_rules
     )
@@ -143,10 +145,12 @@ async def generate_questions(
         questions = []
         for item in raw_questions[:max_questions]:
             if isinstance(item, dict) and item.get("question"):
-                questions.append({
-                    "question": item["question"],
-                    "expected_answer": item.get("expected_answer"),
-                })
+                questions.append(
+                    {
+                        "question": item["question"],
+                        "expected_answer": item.get("expected_answer"),
+                    }
+                )
 
         return questions
 

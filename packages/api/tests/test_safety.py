@@ -7,10 +7,8 @@ import httpx
 import pytest
 
 from src.services.safety import (
-    SafetyResult,
     check_input_safety,
     check_output_safety,
-    _call_guard,
 )
 
 

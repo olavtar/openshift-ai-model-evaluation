@@ -16,11 +16,14 @@ logger = logging.getLogger(__name__)
 class EmbeddingsResult:
     """Outcome of embedding generation."""
 
-    vectors: list[list[float]] | None
-    """Embedding vectors in input order, or None if generation failed or was skipped."""
+    vectors: list[list[float] | None] | None
+    """Embedding vectors in input order. Individual entries may be None for
+    batches that failed. The entire list is None when generation was skipped
+    or every batch failed."""
 
     error: str | None = None
-    """Short reason for UI or logs when ``vectors`` is None."""
+    """Short reason for UI or logs when ``vectors`` is None or partial."""
+
 
 EMBEDDING_TIMEOUT = 60.0  # seconds
 BATCH_SIZE = 16  # chunks per request; each chunk is pre-truncated to ~150 words
@@ -82,47 +85,60 @@ async def generate_embeddings(texts: list[str]) -> EmbeddingsResult:
         max(len(t.split()) for t in truncated) if truncated else 0,
         max(len(t) for t in truncated) if truncated else 0,
     )
-    all_embeddings: list[list[float]] = []
+    all_embeddings: list[list[float] | None] = []
+    total_batches = (len(truncated) + BATCH_SIZE - 1) // BATCH_SIZE
+    failed_batches = 0
+    last_error: str | None = None
 
     try:
         async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT) as client:
             for i in range(0, len(truncated), BATCH_SIZE):
                 batch = truncated[i : i + BATCH_SIZE]
+                batch_num = i // BATCH_SIZE + 1
                 payload = {
                     "model": settings.EMBEDDING_MODEL,
                     "input": batch,
                     "encoding_format": "float",
                 }
 
-                # Retry loop for rate limiting (429)
-                backoff = RATE_LIMIT_BACKOFF
-                for attempt in range(RATE_LIMIT_RETRIES + 1):
-                    response = await client.post(url, json=payload, headers=headers)
-                    if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
-                        logger.warning(
-                            "Embedding rate limited (batch %d/%d), retrying in %.1fs",
-                            i // BATCH_SIZE + 1,
-                            (len(truncated) + BATCH_SIZE - 1) // BATCH_SIZE,
-                            backoff,
-                        )
-                        await asyncio.sleep(backoff)
-                        backoff *= 2
-                        continue
-                    response.raise_for_status()
-                    break
+                try:
+                    # Retry loop for rate limiting (429)
+                    backoff = RATE_LIMIT_BACKOFF
+                    for attempt in range(RATE_LIMIT_RETRIES + 1):
+                        response = await client.post(url, json=payload, headers=headers)
+                        if response.status_code == 429 and attempt < RATE_LIMIT_RETRIES:
+                            logger.warning(
+                                "Embedding rate limited (batch %d/%d), retrying in %.1fs",
+                                batch_num,
+                                total_batches,
+                                backoff,
+                            )
+                            await asyncio.sleep(backoff)
+                            backoff *= 2
+                            continue
+                        response.raise_for_status()
+                        break
 
-                data = response.json()
-                all_embeddings.extend(item["embedding"] for item in data["data"])
+                    data = response.json()
+                    all_embeddings.extend(item["embedding"] for item in data["data"])
+                except Exception as batch_err:
+                    failed_batches += 1
+                    last_error = f"Batch {batch_num}/{total_batches} failed: {batch_err!s}"[:300]
+                    logger.error(
+                        "Embedding batch %d/%d failed: %s", batch_num, total_batches, batch_err
+                    )
+                    all_embeddings.extend(None for _ in batch)
 
-        return EmbeddingsResult(vectors=all_embeddings, error=None)
-
-    except httpx.HTTPStatusError as e:
-        body = (e.response.text[:500] if e.response else "").strip()
-        code = e.response.status_code if e.response else "?"
-        logger.error("Embedding API returned status %s: %s", code, body)
-        detail = body if body else e.response.reason_phrase if e.response else ""
-        msg = f"Embedding API HTTP {code}" + (f": {detail}" if detail else "")
-        return EmbeddingsResult(vectors=None, error=msg)
     except Exception as e:
-        logger.error("Embedding request failed: %s", e)
+        logger.error("Embedding client setup failed: %s", e)
         return EmbeddingsResult(vectors=None, error=f"Embedding request failed: {e!s}"[:500])
+
+    if failed_batches == total_batches:
+        return EmbeddingsResult(vectors=None, error=last_error)
+
+    error_msg = None
+    if failed_batches > 0:
+        error_msg = f"{failed_batches}/{total_batches} batches failed; {last_error}"
+        logger.warning("Partial embedding: %s", error_msg)
+
+    return EmbeddingsResult(vectors=all_embeddings, error=error_msg)

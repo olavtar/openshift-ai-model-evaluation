@@ -6,9 +6,11 @@ import {
     useDocuments,
     useUploadDocument,
     useIngestFromUrl,
+    useRetryEmbedding,
     useDeleteDocument,
+    usePendingDocumentIngestions,
 } from '../../hooks/documents';
-import { FileText, Upload, Trash2, Loader2, AlertCircle, Link } from 'lucide-react';
+import { FileText, Upload, Trash2, Loader2, AlertCircle, Link, RotateCcw } from 'lucide-react';
 import type { DocumentResponse } from '../../schemas/documents';
 import { DOC_STATUS_COLORS } from '../../lib/status-colors';
 
@@ -33,14 +35,41 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
+function PendingIngestionRow({ label, kind }: { label: string; kind: 'file' | 'url' }) {
+    return (
+        <div className="flex items-center justify-between rounded-lg border border-dashed p-4">
+            <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />
+                <div className="flex min-w-0 flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="truncate font-medium" title={label}>
+                            {label}
+                        </span>
+                        <StatusBadge status="processing" />
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                        {kind === 'url'
+                            ? 'Downloading and processing…'
+                            : 'Uploading and processing…'}
+                    </span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function DocumentRow({
     doc,
     onDelete,
+    onRetryEmbed,
     isDeleting,
+    isRetrying,
 }: {
     doc: DocumentResponse;
     onDelete: (id: number) => void;
+    onRetryEmbed: (id: number) => void;
     isDeleting: boolean;
+    isRetrying: boolean;
 }) {
     return (
         <div className="flex items-center justify-between rounded-lg border p-4">
@@ -67,18 +96,35 @@ function DocumentRow({
                     )}
                 </div>
             </div>
-            <button
-                onClick={() => onDelete(doc.id)}
-                disabled={isDeleting}
-                className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-                title="Delete document"
-            >
-                {isDeleting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                    <Trash2 className="h-4 w-4" />
+            <div className="flex items-center gap-1">
+                {(doc.status === 'embedding_failed' ||
+                    (doc.error_message && doc.error_message.includes('missing embeddings'))) && (
+                    <button
+                        onClick={() => onRetryEmbed(doc.id)}
+                        disabled={isRetrying}
+                        className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                        title="Retry embedding generation"
+                    >
+                        {isRetrying ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <RotateCcw className="h-4 w-4" />
+                        )}
+                    </button>
                 )}
-            </button>
+                <button
+                    onClick={() => onDelete(doc.id)}
+                    disabled={isDeleting}
+                    className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    title="Delete document"
+                >
+                    {isDeleting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                        <Trash2 className="h-4 w-4" />
+                    )}
+                </button>
+            </div>
         </div>
     );
 }
@@ -262,14 +308,24 @@ function UploadForm({ onUploaded }: { onUploaded: () => void }) {
 
 function DocumentsPage() {
     const { data: documents, isLoading, error, refetch } = useDocuments();
+    const pendingIngestions = usePendingDocumentIngestions();
     const deleteMutation = useDeleteDocument();
+    const retryMutation = useRetryEmbedding();
     const [showUpload, setShowUpload] = useState(false);
     const [deletingId, setDeletingId] = useState<number | null>(null);
+    const [retryingId, setRetryingId] = useState<number | null>(null);
 
     const handleDelete = (id: number) => {
         setDeletingId(id);
         deleteMutation.mutate(id, {
             onSettled: () => setDeletingId(null),
+        });
+    };
+
+    const handleRetryEmbed = (id: number) => {
+        setRetryingId(id);
+        retryMutation.mutate(id, {
+            onSettled: () => setRetryingId(null),
         });
     };
 
@@ -307,23 +363,31 @@ function DocumentsPage() {
                 )}
                 {error && <p className="text-sm text-destructive">{error.message}</p>}
 
-                {documents && documents.length === 0 && !showUpload && (
-                    <div className="rounded-xl border bg-card p-8 text-center">
-                        <FileText className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-                        <p className="text-sm text-muted-foreground">
-                            No documents yet. Click &quot;Upload&quot; to add a PDF.
-                        </p>
-                    </div>
-                )}
+                {documents &&
+                    documents.length === 0 &&
+                    pendingIngestions.length === 0 &&
+                    !showUpload && (
+                        <div className="rounded-xl border bg-card p-8 text-center">
+                            <FileText className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+                            <p className="text-sm text-muted-foreground">
+                                No documents yet. Click &quot;Upload&quot; to add a PDF.
+                            </p>
+                        </div>
+                    )}
 
-                {documents && documents.length > 0 && (
+                {(pendingIngestions.length > 0 || (documents && documents.length > 0)) && (
                     <div className="space-y-3">
-                        {documents.map((doc) => (
+                        {pendingIngestions.map((p) => (
+                            <PendingIngestionRow key={p.rowKey} label={p.label} kind={p.kind} />
+                        ))}
+                        {documents?.map((doc) => (
                             <DocumentRow
                                 key={doc.id}
                                 doc={doc}
                                 onDelete={handleDelete}
+                                onRetryEmbed={handleRetryEmbed}
                                 isDeleting={deletingId === doc.id}
+                                isRetrying={retryingId === doc.id}
                             />
                         ))}
                     </div>

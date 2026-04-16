@@ -19,7 +19,9 @@ def _summarize_upstream_error(response: httpx.Response) -> str:
     try:
         data = response.json()
     except Exception:
-        return text[:_DEBUG_ERROR_SNIPPET_LEN] + ("..." if len(text) > _DEBUG_ERROR_SNIPPET_LEN else "")
+        return text[:_DEBUG_ERROR_SNIPPET_LEN] + (
+            "..." if len(text) > _DEBUG_ERROR_SNIPPET_LEN else ""
+        )
 
     err = data.get("error")
     if isinstance(err, dict):
@@ -35,6 +37,7 @@ def _summarize_upstream_error(response: httpx.Response) -> str:
         return detail.strip()[:_DEBUG_ERROR_SNIPPET_LEN]
 
     return text[:_DEBUG_ERROR_SNIPPET_LEN] + ("..." if len(text) > _DEBUG_ERROR_SNIPPET_LEN else "")
+
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions based on the provided context. "

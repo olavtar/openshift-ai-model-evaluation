@@ -70,7 +70,11 @@ def test_returns_answer_on_success():
         mock_client_cls.return_value = mock_client
 
         result = asyncio.run(
-            generate_answer("What is the meaning?", [{"source_document": "doc.pdf", "page_number": "1", "text": "context"}], "granite-3.1-8b-instruct")
+            generate_answer(
+                "What is the meaning?",
+                [{"source_document": "doc.pdf", "page_number": "1", "text": "context"}],
+                "granite-3.1-8b-instruct",
+            )
         )
 
     assert result["answer"] == "The answer is 42."
@@ -102,9 +106,7 @@ def test_returns_error_on_api_failure():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(
-            generate_answer("What?", [], "granite-3.1-8b-instruct")
-        )
+        result = asyncio.run(generate_answer("What?", [], "granite-3.1-8b-instruct"))
 
     assert "error" in result["answer"].lower() or "500" in result["answer"]
 
@@ -123,7 +125,9 @@ def test_http_error_includes_upstream_message_when_debug():
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.text = '{"error":{"message":"model not found","type":"invalid_request"}}'
-    mock_response.json.return_value = {"error": {"message": "model not found", "type": "invalid_request"}}
+    mock_response.json.return_value = {
+        "error": {"message": "model not found", "type": "invalid_request"}
+    }
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
         "Server Error", request=MagicMock(), response=mock_response
     )
@@ -135,9 +139,7 @@ def test_http_error_includes_upstream_message_when_debug():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(
-            generate_answer("What?", [], "granite-3.1-8b-instruct")
-        )
+        result = asyncio.run(generate_answer("What?", [], "granite-3.1-8b-instruct"))
 
     assert "500" in result["answer"]
     assert "model not found" in result["answer"]

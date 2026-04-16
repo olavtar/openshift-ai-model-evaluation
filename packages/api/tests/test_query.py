@@ -1,8 +1,9 @@
 # This project was developed with assistance from AI tools.
 """Tests for the RAG query endpoint (/query)."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from src.core.config import settings
 from src.services.safety import SafetyResult
@@ -25,7 +26,13 @@ def test_query_returns_answer(client):
     """Should return an answer with sources from the RAG pipeline."""
     model_a = settings.MODEL_A_NAME
     mock_chunks = [
-        {"id": 1, "text": "Revenue was $1B.", "source_document": "report.pdf", "page_number": "5", "score": 0.92},
+        {
+            "id": 1,
+            "text": "Revenue was $1B.",
+            "source_document": "report.pdf",
+            "page_number": "5",
+            "score": 0.92,
+        },
     ]
     mock_generation = {
         "answer": "Revenue was $1 billion.",
@@ -57,11 +64,14 @@ def test_query_with_custom_model(client):
     model_b = settings.MODEL_B_NAME
     with (
         patch("src.routes.query.retrieve_chunks", return_value=[]),
-        patch("src.routes.query.generate_answer", return_value={
-            "answer": "No context available.",
-            "model": model_b,
-            "usage": None,
-        }) as mock_gen,
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={
+                "answer": "No context available.",
+                "model": model_b,
+                "usage": None,
+            },
+        ) as mock_gen,
     ):
         response = client.post(
             "/query/",
@@ -77,7 +87,7 @@ def test_query_with_custom_model(client):
 @pytest.mark.asyncio
 async def test_generate_answer_uses_custom_system_prompt():
     """Should pass system_prompt override to the LLM payload."""
-    from src.services.generation import generate_answer, SYSTEM_PROMPT
+    from src.services.generation import SYSTEM_PROMPT, generate_answer
 
     custom_prompt = "You are an FSI compliance specialist."
 
@@ -120,11 +130,14 @@ def test_query_with_no_sources(client):
     model_a = settings.MODEL_A_NAME
     with (
         patch("src.routes.query.retrieve_chunks", return_value=[]),
-        patch("src.routes.query.generate_answer", return_value={
-            "answer": "I don't have enough context to answer.",
-            "model": model_a,
-            "usage": None,
-        }),
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={
+                "answer": "I don't have enough context to answer.",
+                "model": model_a,
+                "usage": None,
+            },
+        ),
     ):
         response = client.post(
             "/query/",
@@ -167,7 +180,13 @@ def test_query_filters_unsafe_output(client):
     unsafe_output = SafetyResult(is_safe=False, category="S3")
 
     mock_chunks = [
-        {"id": 1, "text": "context", "source_document": "doc.pdf", "page_number": "1", "score": 0.9},
+        {
+            "id": 1,
+            "text": "context",
+            "source_document": "doc.pdf",
+            "page_number": "1",
+            "score": 0.9,
+        },
     ]
     mock_generation = {
         "answer": "Harmful output here",
@@ -176,8 +195,14 @@ def test_query_filters_unsafe_output(client):
     }
 
     with (
-        patch("src.routes.query.check_input_safety", new_callable=AsyncMock, return_value=safe_input),
-        patch("src.routes.query.check_output_safety", new_callable=AsyncMock, return_value=unsafe_output),
+        patch(
+            "src.routes.query.check_input_safety", new_callable=AsyncMock, return_value=safe_input
+        ),
+        patch(
+            "src.routes.query.check_output_safety",
+            new_callable=AsyncMock,
+            return_value=unsafe_output,
+        ),
         patch("src.routes.query.retrieve_chunks", return_value=mock_chunks),
         patch("src.routes.query.generate_answer", return_value=mock_generation),
     ):
@@ -198,7 +223,13 @@ def test_query_passes_through_when_safe(client):
     model_a = settings.MODEL_A_NAME
 
     mock_chunks = [
-        {"id": 1, "text": "Revenue data", "source_document": "report.pdf", "page_number": "5", "score": 0.92},
+        {
+            "id": 1,
+            "text": "Revenue data",
+            "source_document": "report.pdf",
+            "page_number": "5",
+            "score": 0.92,
+        },
     ]
     mock_generation = {
         "answer": "Revenue was $1 billion.",
@@ -207,8 +238,12 @@ def test_query_passes_through_when_safe(client):
     }
 
     with (
-        patch("src.routes.query.check_input_safety", new_callable=AsyncMock, return_value=safe_result),
-        patch("src.routes.query.check_output_safety", new_callable=AsyncMock, return_value=safe_result),
+        patch(
+            "src.routes.query.check_input_safety", new_callable=AsyncMock, return_value=safe_result
+        ),
+        patch(
+            "src.routes.query.check_output_safety", new_callable=AsyncMock, return_value=safe_result
+        ),
         patch("src.routes.query.retrieve_chunks", return_value=mock_chunks),
         patch("src.routes.query.generate_answer", return_value=mock_generation),
     ):

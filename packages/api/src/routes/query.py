@@ -70,7 +70,9 @@ async def query(
     # Post-generation safety check on model output
     output_safety = await check_output_safety(result["answer"])
     if not output_safety.is_safe:
-        logger.info("Response blocked by output safety filter (category=%s)", output_safety.category)
+        logger.info(
+            "Response blocked by output safety filter (category=%s)", output_safety.category
+        )
         return QueryResponse(
             answer="The generated response was filtered for safety.",
             model=result["model"],
@@ -93,9 +95,7 @@ async def query(
     if result.get("usage"):
         usage = UsageInfo(**result["usage"])
 
-    low_confidence = (
-        len(sources) > 0 and all(s.score < CONFIDENCE_THRESHOLD for s in sources)
-    )
+    low_confidence = len(sources) > 0 and all(s.score < CONFIDENCE_THRESHOLD for s in sources)
 
     return QueryResponse(
         answer=result["answer"],
