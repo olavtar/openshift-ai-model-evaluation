@@ -31,10 +31,16 @@ vi.mock('../../services/documents', () => ({
     listDocuments: vi.fn(),
     getDocument: vi.fn(),
     uploadDocument: vi.fn(),
+    ingestFromUrl: vi.fn(),
     deleteDocument: vi.fn(),
 }));
 
-import { listDocuments, uploadDocument, deleteDocument } from '../../services/documents';
+import {
+    listDocuments,
+    uploadDocument,
+    ingestFromUrl,
+    deleteDocument,
+} from '../../services/documents';
 
 describe('Documents hooks', () => {
     beforeEach(() => {
@@ -116,6 +122,59 @@ describe('Documents hooks', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
         expect(deleteDocument).toHaveBeenCalledWith(1);
+    });
+
+    it('should ingest a document from URL via useIngestFromUrl hook', async () => {
+        const ingestResponse = {
+            document_id: 4,
+            filename: 'report.pdf',
+            status: 'ready',
+            message: 'Extracted 8 chunks from 4 pages (with embeddings)',
+            embedding_error: null,
+        };
+        vi.mocked(ingestFromUrl).mockResolvedValue(ingestResponse);
+        vi.mocked(listDocuments).mockResolvedValue(mockDocuments);
+
+        const { renderHook } = await import('@testing-library/react');
+        const { useIngestFromUrl } = await import('../../hooks/documents');
+        const { createTestQueryClient } = await import('../../test/test-utils');
+        const { QueryClientProvider } = await import('@tanstack/react-query');
+        const { createElement } = await import('react');
+
+        const queryClient = createTestQueryClient();
+        const wrapper = ({ children }: { children: React.ReactNode }) =>
+            createElement(QueryClientProvider, { client: queryClient }, children);
+
+        const { result } = renderHook(() => useIngestFromUrl(), { wrapper });
+
+        result.current.mutate('https://example.com/report.pdf');
+
+        await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+        expect(ingestFromUrl).toHaveBeenCalledWith('https://example.com/report.pdf');
+        expect(result.current.data).toEqual(ingestResponse);
+    });
+
+    it('should handle URL ingestion error', async () => {
+        vi.mocked(ingestFromUrl).mockRejectedValue(new Error('Invalid URL: bad'));
+
+        const { renderHook } = await import('@testing-library/react');
+        const { useIngestFromUrl } = await import('../../hooks/documents');
+        const { createTestQueryClient } = await import('../../test/test-utils');
+        const { QueryClientProvider } = await import('@tanstack/react-query');
+        const { createElement } = await import('react');
+
+        const queryClient = createTestQueryClient();
+        const wrapper = ({ children }: { children: React.ReactNode }) =>
+            createElement(QueryClientProvider, { client: queryClient }, children);
+
+        const { result } = renderHook(() => useIngestFromUrl(), { wrapper });
+
+        result.current.mutate('bad');
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(result.current.error?.message).toBe('Invalid URL: bad');
     });
 
     it('should handle upload error', async () => {
