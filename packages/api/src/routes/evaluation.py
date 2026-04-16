@@ -32,7 +32,8 @@ from ..schemas.evaluation import (
 )
 from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, list_profiles, load_profile
-from ..services.retrieval import retrieve_chunks
+from ..services.query_decomposition import decompose_query
+from ..services.retrieval import _deduplicate_chunks, retrieve_chunks
 from ..services.safety import check_input_safety
 from ..services.scoring import compute_chunk_alignment, score_result
 from ..services.synthesizer import generate_questions
@@ -120,13 +121,38 @@ async def _process_question(
                     "diversity_min": r.document_diversity_min,
                     "keyword_enabled": r.keyword_search_enabled,
                     "dedup_threshold": r.dedup_threshold,
+                    "diversity_relevance_threshold": r.diversity_relevance_threshold,
                 }
 
-            # Each concurrent question gets its own session for retrieval
+            # Decompose broad questions into targeted sub-queries for
+            # multi-document retrieval, then merge results across sub-queries
+            sub_queries = await decompose_query(question)
+
             async with SessionLocal() as retrieval_session:
-                chunks = await retrieve_chunks(
-                    query=question, session=retrieval_session, **retrieval_kwargs
-                )
+                if len(sub_queries) <= 1:
+                    # Single query (original or decomposition failed)
+                    chunks = await retrieve_chunks(
+                        query=question, session=retrieval_session, **retrieval_kwargs
+                    )
+                else:
+                    # Run retrieval for each sub-query and merge
+                    all_chunks: list[dict] = []
+                    seen_ids: set[int] = set()
+                    for sq in sub_queries:
+                        sq_chunks = await retrieve_chunks(
+                            query=sq, session=retrieval_session, **retrieval_kwargs
+                        )
+                        for chunk in sq_chunks:
+                            if chunk["id"] not in seen_ids:
+                                all_chunks.append(chunk)
+                                seen_ids.add(chunk["id"])
+
+                    # Sort merged results by score descending, dedup, and trim
+                    all_chunks.sort(key=lambda c: c.get("score", 0.0), reverse=True)
+                    dedup_threshold = retrieval_kwargs.get("dedup_threshold", 0.85)
+                    all_chunks = _deduplicate_chunks(all_chunks, dedup_threshold)
+                    top_k = retrieval_kwargs.get("top_k", 10)
+                    chunks = all_chunks[:top_k]
 
             if eval_run_id in _cancelled_runs:
                 return result

@@ -29,6 +29,7 @@ async def retrieve_chunks(
     diversity_min: int = 3,
     keyword_enabled: bool = True,
     dedup_threshold: float = 0.85,
+    diversity_relevance_threshold: float = 0.3,
 ) -> list[dict]:
     """Retrieve the most relevant chunks for a query.
 
@@ -46,6 +47,9 @@ async def retrieve_chunks(
         keyword_enabled: Whether to include keyword search in hybrid retrieval.
         dedup_threshold: Jaccard similarity threshold for dropping near-duplicate
             chunks. Set to 1.0 to disable deduplication.
+        diversity_relevance_threshold: Minimum score a document's best chunk must
+            have to qualify for guaranteed diversity slots. Documents below this
+            threshold get zero guaranteed representation.
 
     Returns:
         List of dicts with 'id', 'text', 'source_document', 'page_number',
@@ -76,7 +80,9 @@ async def retrieve_chunks(
     deduped = _deduplicate_chunks(merged, dedup_threshold)
 
     # Apply document diversity and per-doc caps
-    final = _apply_diversity(deduped, top_k, max_per_doc, diversity_min)
+    final = _apply_diversity(
+        deduped, top_k, max_per_doc, diversity_min, diversity_relevance_threshold
+    )
 
     return final
 
@@ -255,20 +261,27 @@ def _apply_diversity(
     top_k: int,
     max_per_doc: int | None,
     diversity_min: int,
+    relevance_threshold: float = 0.3,
 ) -> list[dict]:
-    """Apply document diversity and per-document caps.
+    """Apply threshold-based document diversity and per-document caps.
 
     Strategy:
     1. If max_per_doc is set, cap chunks per source document.
-    2. If we have fewer than diversity_min documents, promote underrepresented
-       docs from lower-ranked positions.
-    3. Return top_k results.
+    2. Identify documents that have at least one chunk above the relevance
+       threshold -- only these qualify for guaranteed diversity slots.
+    3. Guarantee one chunk per qualifying document (up to diversity_min).
+    4. Fill remaining slots by rank order.
+
+    Documents below the relevance threshold get zero guaranteed representation,
+    preventing low-quality chunks from diluting strong signals.
 
     Args:
         chunks: Ranked list of chunks (already sorted by relevance/RRF).
         top_k: Number of chunks to return.
         max_per_doc: Max chunks per document (None = unlimited).
         diversity_min: Soft target for document diversity.
+        relevance_threshold: Minimum score for a document's best chunk to
+            qualify for a guaranteed diversity slot.
 
     Returns:
         Filtered list of up to top_k chunks.
@@ -290,26 +303,48 @@ def _apply_diversity(
                 deferred.append(chunk)
         chunks = capped + deferred
 
-    # Diversity promotion: ensure at least diversity_min distinct documents
+    # Threshold-based diversity: only promote documents with relevant chunks
     if diversity_min > 1 and len(chunks) > top_k:
+        # Find the best score per document
+        best_score_per_doc: dict[str, float] = {}
+        for chunk in chunks:
+            doc = chunk["source_document"]
+            score = chunk.get("score", 0.0)
+            if doc not in best_score_per_doc or score > best_score_per_doc[doc]:
+                best_score_per_doc[doc] = score
+
+        # Only documents above the relevance threshold qualify for guaranteed slots
+        qualifying_docs = {
+            doc for doc, score in best_score_per_doc.items() if score >= relevance_threshold
+        }
+
         selected: list[dict] = []
         remaining: list[dict] = list(chunks)
         seen_docs: set[str] = set()
 
-        # First pass: pick one from each unseen document until diversity_min
+        # First pass: pick one from each qualifying unseen document
         for chunk in list(remaining):
             if len(seen_docs) >= diversity_min:
                 break
-            if chunk["source_document"] not in seen_docs:
+            doc = chunk["source_document"]
+            if doc not in seen_docs and doc in qualifying_docs:
                 selected.append(chunk)
                 remaining.remove(chunk)
-                seen_docs.add(chunk["source_document"])
+                seen_docs.add(doc)
 
         # Fill rest by rank order
         for chunk in remaining:
             if len(selected) >= top_k:
                 break
             selected.append(chunk)
+
+        if len(qualifying_docs) > 1:
+            logger.debug(
+                "Diversity: %d qualifying docs (threshold=%.2f), %d guaranteed slots used",
+                len(qualifying_docs),
+                relevance_threshold,
+                len(seen_docs),
+            )
 
         return selected[:top_k]
 

@@ -31,6 +31,17 @@ system_prompt: |
     effective dates where present in the context
   - Lead with the direct answer, then provide supporting detail
 
+  SYNTHESIS REQUIREMENTS:
+  - Synthesize across all RELEVANT documents in the context. Do not include
+    documents that do not contribute meaningful information to the answer.
+  - When the context contains information from multiple regulatory sources,
+    structure your response to address each source's distinct contribution
+    rather than collapsing into a single narrative from one document.
+  - For each regulatory concept or requirement, cite the specific source
+    document and page number.
+  - Do not fabricate connections between regulations or documents that are
+    not supported by the provided context.
+
   RULES:
   - If the context does not contain sufficient information to answer, say so
     clearly rather than speculating or using general knowledge
@@ -68,9 +79,10 @@ critical_thresholds:
 
 # Retrieval config
 retrieval:
-  top_k: 10
+  top_k: 15
   max_chunks_per_document: 4
-  rerank_depth: 20
-  document_diversity_min: 3
+  rerank_depth: 30
+  document_diversity_min: 5
   keyword_search_enabled: true
   dedup_threshold: 0.85
+  diversity_relevance_threshold: 0.3
