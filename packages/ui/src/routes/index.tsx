@@ -12,6 +12,7 @@ import {
     BarChart3,
     GitCompareArrows,
     FileText,
+    AlertTriangle,
 } from 'lucide-react';
 import { HEALTH_STATUS_COLORS } from '../lib/status-colors';
 import { formatScore, formatLatency } from '../lib/format';
@@ -126,7 +127,7 @@ function LatestComparison({ runAId, runBId }: { runAId: number; runBId: number }
 }
 
 function Index() {
-    const { data: readiness, isLoading: healthLoading, error: healthError } = useHealth();
+    const { data: readiness, isPending: healthPending, error: healthError } = useHealth();
     const { data: runs } = useEvalRuns();
     const { data: documents } = useDocuments();
 
@@ -152,6 +153,12 @@ function Index() {
         runs?.filter((r) => r.status === 'completed' || r.status === 'complete') ?? [];
     const hasDocuments = (documents?.length ?? 0) > 0;
     const hasComparableRuns = completedRuns.length >= 2;
+    const comparisonReadinessLabel = hasComparableRuns
+        ? 'Ready to compare'
+        : hasDocuments
+          ? 'Documents ready'
+          : 'Setup required';
+    const comparisonReadinessIsWarning = !hasComparableRuns && !hasDocuments;
     const latestComparablePair = hasComparableRuns
         ? { runA: completedRuns[0].id, runB: completedRuns[1].id }
         : null;
@@ -218,8 +225,17 @@ function Index() {
                 <section className="mt-6 rounded-xl border bg-card p-4">
                     <div className="mb-3 flex items-center justify-between">
                         <h2 className="text-lg font-semibold">Comparison Readiness</h2>
-                        <span className="text-xs text-muted-foreground">
-                            {hasComparableRuns ? 'Ready to compare' : 'Setup required'}
+                        <span
+                            className={`inline-flex items-center gap-1 text-xs ${
+                                comparisonReadinessIsWarning
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-muted-foreground'
+                            }`}
+                        >
+                            {comparisonReadinessIsWarning && (
+                                <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            {comparisonReadinessLabel}
                         </span>
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -228,9 +244,17 @@ function Index() {
                                 1. Documents uploaded
                             </div>
                             <div className="mt-1 text-sm font-medium">
-                                {hasDocuments
-                                    ? `${documents?.length ?? 0} ready`
-                                    : 'Upload at least one'}
+                                {hasDocuments ? (
+                                    `${documents?.length ?? 0} ready`
+                                ) : (
+                                    <Link
+                                        to="/documents"
+                                        className="inline-flex items-center gap-1 text-primary underline underline-offset-4 hover:text-primary/80"
+                                    >
+                                        Upload at least one
+                                        <ArrowRight className="h-3.5 w-3.5" />
+                                    </Link>
+                                )}
                             </div>
                         </div>
                         <div className="rounded-lg border p-3">
@@ -255,7 +279,7 @@ function Index() {
                 )}
 
                 {/* Empty state */}
-                {completedRuns.length === 0 && !healthLoading && (
+                {completedRuns.length === 0 && !healthPending && (
                     <div className="mt-6 rounded-xl border bg-card p-8 text-center">
                         <BarChart3 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                         <p className="text-sm text-muted-foreground">
@@ -287,7 +311,7 @@ function Index() {
                     <div className="mb-4 flex items-center gap-2">
                         <Monitor className="h-5 w-5" />
                         <h2 className="text-lg font-semibold">System Health</h2>
-                        {!healthLoading && (
+                        {!healthPending && (
                             <span
                                 className={`ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
                                     overallStatus === 'ready'
@@ -302,7 +326,7 @@ function Index() {
                         )}
                     </div>
 
-                    {healthLoading && (
+                    {healthPending && (
                         <p className="text-sm text-muted-foreground">Checking services...</p>
                     )}
                     {healthError && (

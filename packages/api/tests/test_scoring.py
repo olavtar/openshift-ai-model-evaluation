@@ -77,11 +77,13 @@ async def test_score_result_uses_evaluated_model_when_no_env_judge():
         mock_settings.resolved_judge_model_name = ""
         mock_settings.api_token_bare = "test-token"
 
-        with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
-             patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
-             patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
-             patch("src.services.scoring._abstention_metric", return_value=mock_metric), \
-             patch("src.services.scoring.MaaSJudgeModel") as mock_judge_cls:
+        with (
+            patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric),
+            patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric),
+            patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric),
+            patch("src.services.scoring._abstention_metric", return_value=mock_metric),
+            patch("src.services.scoring.MaaSJudgeModel") as mock_judge_cls,
+        ):
             result = await score_result(
                 question="What is AI?",
                 answer="AI is artificial intelligence.",
@@ -103,14 +105,16 @@ async def test_score_result_returns_all_metrics(_mock_settings):
     mock_metric.score = 0.85
     mock_metric.a_measure = AsyncMock()
 
-    with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
-         patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring._abstention_metric", return_value=mock_metric), \
-         patch("src.services.scoring._completeness_metric", return_value=mock_metric), \
-         patch("src.services.scoring._correctness_metric", return_value=mock_metric), \
-         patch("src.services.scoring._compliance_accuracy_metric", return_value=mock_metric):
+    with (
+        patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric),
+        patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric),
+        patch("src.services.scoring.ContextualPrecisionMetric", return_value=mock_metric),
+        patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric),
+        patch("src.services.scoring._abstention_metric", return_value=mock_metric),
+        patch("src.services.scoring._completeness_metric", return_value=mock_metric),
+        patch("src.services.scoring._correctness_metric", return_value=mock_metric),
+        patch("src.services.scoring._compliance_accuracy_metric", return_value=mock_metric),
+    ):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -142,10 +146,12 @@ async def test_score_result_detects_hallucination(_mock_settings):
     high_score_metric.score = 0.9
     high_score_metric.a_measure = AsyncMock()
 
-    with patch("src.services.scoring.FaithfulnessMetric", return_value=low_score_metric), \
-         patch("src.services.scoring.AnswerRelevancyMetric", return_value=high_score_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=high_score_metric), \
-         patch("src.services.scoring._abstention_metric", return_value=high_score_metric):
+    with (
+        patch("src.services.scoring.FaithfulnessMetric", return_value=low_score_metric),
+        patch("src.services.scoring.AnswerRelevancyMetric", return_value=high_score_metric),
+        patch("src.services.scoring.ContextualRelevancyMetric", return_value=high_score_metric),
+        patch("src.services.scoring._abstention_metric", return_value=high_score_metric),
+    ):
         result = await score_result(
             question="What is the capital requirement?",
             answer="Banks need 50% capital reserves.",
@@ -168,14 +174,16 @@ async def test_score_result_handles_metric_failure(_mock_settings):
     ok_metric.score = 0.9
     ok_metric.a_measure = AsyncMock()
 
-    with patch("src.services.scoring.FaithfulnessMetric", return_value=failing_metric), \
-         patch("src.services.scoring.AnswerRelevancyMetric", return_value=ok_metric), \
-         patch("src.services.scoring.ContextualPrecisionMetric", return_value=ok_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=ok_metric), \
-         patch("src.services.scoring._abstention_metric", return_value=ok_metric), \
-         patch("src.services.scoring._completeness_metric", return_value=ok_metric), \
-         patch("src.services.scoring._correctness_metric", return_value=ok_metric), \
-         patch("src.services.scoring._compliance_accuracy_metric", return_value=ok_metric):
+    with (
+        patch("src.services.scoring.FaithfulnessMetric", return_value=failing_metric),
+        patch("src.services.scoring.AnswerRelevancyMetric", return_value=ok_metric),
+        patch("src.services.scoring.ContextualPrecisionMetric", return_value=ok_metric),
+        patch("src.services.scoring.ContextualRelevancyMetric", return_value=ok_metric),
+        patch("src.services.scoring._abstention_metric", return_value=ok_metric),
+        patch("src.services.scoring._completeness_metric", return_value=ok_metric),
+        patch("src.services.scoring._correctness_metric", return_value=ok_metric),
+        patch("src.services.scoring._compliance_accuracy_metric", return_value=ok_metric),
+    ):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",
@@ -201,10 +209,12 @@ async def test_score_result_without_expected_answer(_mock_settings):
     mock_metric.score = 0.85
     mock_metric.a_measure = AsyncMock()
 
-    with patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric), \
-         patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric), \
-         patch("src.services.scoring._abstention_metric", return_value=mock_metric):
+    with (
+        patch("src.services.scoring.FaithfulnessMetric", return_value=mock_metric),
+        patch("src.services.scoring.AnswerRelevancyMetric", return_value=mock_metric),
+        patch("src.services.scoring.ContextualRelevancyMetric", return_value=mock_metric),
+        patch("src.services.scoring._abstention_metric", return_value=mock_metric),
+    ):
         result = await score_result(
             question="What is AI?",
             answer="AI is artificial intelligence.",

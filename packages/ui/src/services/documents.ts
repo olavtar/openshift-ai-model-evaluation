@@ -51,6 +51,18 @@ export async function ingestFromUrl(url: string): Promise<DocumentUploadResponse
     return DocumentUploadResponseSchema.parse(data);
 }
 
+export async function retryEmbedding(id: number): Promise<DocumentResponse> {
+    const response = await fetch(`/api/documents/${id}/embed`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail ?? 'Failed to generate embeddings');
+    }
+    const data = await response.json();
+    return DocumentResponseSchema.parse(data);
+}
+
 export async function deleteDocument(id: number): Promise<void> {
     const response = await fetch(`/api/documents/${id}`, {
         method: 'DELETE',

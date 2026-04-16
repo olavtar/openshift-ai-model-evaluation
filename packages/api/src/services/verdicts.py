@@ -338,9 +338,7 @@ def compute_comparison_decision(
     if not profile:
         risk_flags.append("No evaluation profile: verdict and gate checks were skipped")
 
-    winner_name = (
-        model_a if winner == "run_a" else model_b if winner == "run_b" else None
-    )
+    winner_name = model_a if winner == "run_a" else model_b if winner == "run_b" else None
     summary = _build_decision_summary(winner, winner_name, reason_codes, risk_flags)
 
     return ComparisonDecisionResult(
@@ -370,9 +368,7 @@ def _build_decision_summary(
         return "Comparison inconclusive."
 
     if "OPPONENT_DISQUALIFIED" in reason_codes:
-        return (
-            f"{winner_name} wins because the other model fails critical quality gates."
-        )
+        return f"{winner_name} wins because the other model fails critical quality gates."
 
     parts: list[str] = []
     if "BETTER_VERDICT" in reason_codes:

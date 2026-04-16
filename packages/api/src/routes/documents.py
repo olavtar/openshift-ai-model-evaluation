@@ -1,12 +1,14 @@
 # This project was developed with assistance from AI tools.
 """Document management endpoints -- upload, list, and status."""
 
+import asyncio
 import logging
 import os
 from datetime import UTC, datetime
 
 from db import Chunk, Document, get_db
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from db.database import SessionLocal
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,16 +25,90 @@ router = APIRouter()
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
+# Serialize embedding generation so concurrent uploads don't flood the API
+_embedding_semaphore = asyncio.Semaphore(1)
+
+
+async def _generate_embeddings_for_document(document_id: int) -> None:
+    """Background task: generate embeddings for all chunks of a document.
+
+    Acquires a semaphore so only one document is embedded at a time,
+    preventing concurrent uploads from overwhelming the embedding API.
+    """
+    async with _embedding_semaphore:
+        async with SessionLocal() as session:
+            doc = await session.get(Document, document_id)
+            if not doc or doc.deleted_at is not None:
+                return
+
+            result = await session.execute(
+                select(Chunk)
+                .where(Chunk.document_id == document_id, Chunk.embedding.is_(None))
+                .order_by(Chunk.id)
+            )
+            chunks = result.scalars().all()
+            if not chunks:
+                doc.status = "ready"
+                await session.commit()
+                return
+
+            texts = [c.text for c in chunks]
+            embed_out = await generate_embeddings(texts)
+            embeddings = embed_out.vectors
+
+            if not embeddings:
+                doc.status = "embedding_failed"
+                doc.error_message = embed_out.error or "Embedding generation failed"
+                await session.commit()
+                logger.error(
+                    "Embedding failed for document %d (%s): %s",
+                    document_id,
+                    doc.filename,
+                    embed_out.error,
+                )
+                return
+
+            updated = 0
+            for i, chunk in enumerate(chunks):
+                vec = embeddings[i]
+                if vec is not None:
+                    chunk.embedding = vec
+                    updated += 1
+
+            if updated == len(chunks):
+                doc.status = "ready"
+                doc.error_message = None
+            elif updated > 0:
+                doc.status = "ready"
+                doc.error_message = (
+                    f"{len(chunks) - updated}/{len(chunks)} chunks missing embeddings"
+                )
+            else:
+                doc.status = "embedding_failed"
+                doc.error_message = embed_out.error or "Embedding generation failed"
+
+            await session.commit()
+            logger.info(
+                "Embedded document %d (%s): %d/%d chunks",
+                document_id,
+                doc.filename,
+                updated,
+                len(chunks),
+            )
+
 
 @router.post("/upload", response_model=DocumentUploadResponse, status_code=201)
 async def upload_document(
     file: UploadFile,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ) -> DocumentUploadResponse:
     """Upload a PDF document for processing.
 
-    Extracts text from each page and stores as chunks for later
-    embedding and retrieval.
+    Parses the PDF and stores chunks immediately. Embedding generation
+    runs in the background so the upload returns quickly. The document
+    status will transition from 'processing' to 'ready' (or
+    'embedding_failed') once embeddings are generated.
     """
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -76,13 +152,9 @@ async def upload_document(
             message=error_msg,
         )
 
-    # Generate embeddings (returns None if unavailable)
-    chunk_texts = [c.text for c in parse_result.chunks]
-    embed_out = await generate_embeddings(chunk_texts)
-    embeddings = embed_out.vectors
-
+    # Store chunks without embeddings (background task will add them)
     db_chunks = []
-    for i, chunk_data in enumerate(parse_result.chunks):
+    for chunk_data in parse_result.chunks:
         chunk = Chunk(
             document_id=doc.id,
             text=chunk_data.text,
@@ -91,16 +163,15 @@ async def upload_document(
             section_path=chunk_data.section_path,
             element_type=chunk_data.element_type,
             token_count=chunk_data.token_count,
-            embedding=embeddings[i] if embeddings else None,
+            embedding=None,
         )
         db_chunks.append(chunk)
 
     session.add_all(db_chunks)
-    doc.status = "ready"
     doc.chunk_count = len(db_chunks)
     doc.page_count = parse_result.page_count
 
-    # Capture values before commit (commit expires ORM attributes in async context)
+    # Capture values before commit
     doc_id = doc.id
     doc_filename = doc.filename
     num_chunks = len(db_chunks)
@@ -108,13 +179,17 @@ async def upload_document(
     parser = parse_result.parser_used
     await session.commit()
 
-    embed_status = "with embeddings" if embeddings else "without embeddings"
+    # Generate embeddings in background (serialized via semaphore)
+    background_tasks.add_task(_generate_embeddings_for_document, doc_id)
+
     return DocumentUploadResponse(
         document_id=doc_id,
         filename=doc_filename,
-        status="ready",
-        message=f"Extracted {num_chunks} chunks from {num_pages} pages ({embed_status}, parser: {parser})",
-        embedding_error=embed_out.error,
+        status="processing",
+        message=(
+            f"Parsed {num_chunks} chunks from {num_pages} pages (parser: {parser}). "
+            "Embedding generation in progress."
+        ),
     )
 
 
@@ -124,9 +199,7 @@ async def list_documents(
 ) -> list[DocumentResponse]:
     """List all non-deleted documents."""
     result = await session.execute(
-        select(Document)
-        .where(Document.deleted_at.is_(None))
-        .order_by(Document.created_at.desc())
+        select(Document).where(Document.deleted_at.is_(None)).order_by(Document.created_at.desc())
     )
     docs = result.scalars().all()
     return [
@@ -177,6 +250,64 @@ async def delete_document(
     if doc.deleted_at is None:
         doc.deleted_at = datetime.now(UTC).replace(tzinfo=None)
         await session.commit()
+
+
+@router.post("/{document_id}/embed", response_model=DocumentStatusResponse)
+async def embed_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_db),
+) -> DocumentStatusResponse:
+    """Retry embedding generation for a document with missing embeddings.
+
+    Queues the embedding work as a background task (serialized with other
+    embedding work). The document status changes to 'processing' immediately;
+    poll the status endpoint to see when it completes.
+    """
+    doc = await session.get(Document, document_id)
+    if not doc or doc.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    result = await session.execute(
+        select(Chunk.id)
+        .where(
+            Chunk.document_id == document_id,
+            Chunk.embedding.is_(None),
+        )
+        .limit(1)
+    )
+    has_missing = result.scalar_one_or_none() is not None
+
+    if not has_missing:
+        return DocumentStatusResponse(
+            document_id=doc.id,
+            filename=doc.filename,
+            status=doc.status,
+            chunk_count=doc.chunk_count,
+            page_count=doc.page_count,
+            error_message="All chunks already have embeddings",
+        )
+
+    doc.status = "processing"
+    doc.error_message = None
+
+    # Capture values before commit (async session expires ORM attributes)
+    doc_id = doc.id
+    doc_filename = doc.filename
+    doc_chunk_count = doc.chunk_count
+    doc_page_count = doc.page_count
+    await session.commit()
+
+    background_tasks.add_task(_generate_embeddings_for_document, document_id)
+
+    return DocumentStatusResponse(
+        document_id=doc_id,
+        filename=doc_filename,
+        status="processing",
+        chunk_count=doc_chunk_count,
+        page_count=doc_page_count,
+        error_message="Embedding generation queued",
+    )
 
 
 @router.get("/{document_id}/status", response_model=DocumentStatusResponse)

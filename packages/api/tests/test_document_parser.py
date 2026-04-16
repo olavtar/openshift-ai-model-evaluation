@@ -2,10 +2,7 @@
 """Tests for the document parser service (Docling + pypdf)."""
 
 import io
-from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from src.services.document_parser import (
     ChunkData,
@@ -19,7 +16,6 @@ from src.services.document_parser import (
 def _make_pdf_bytes(text: str = "Hello world from test PDF.") -> bytes:
     """Create a minimal valid PDF with text content."""
     from pypdf import PdfWriter
-    from pypdf.generic import AnnotationBuilder
 
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)

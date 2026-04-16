@@ -1,7 +1,7 @@
 # This project was developed with assistance from AI tools.
 """Tests for embedding service."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -52,8 +52,6 @@ def test_returns_none_when_no_token():
 
 def test_returns_embeddings_on_success():
     """Should return embeddings from the API response."""
-    from unittest.mock import MagicMock
-
     from src.core.config import settings
 
     settings.API_TOKEN = "test-token"
@@ -88,8 +86,6 @@ def test_returns_embeddings_on_success():
 
 def test_retries_on_rate_limit_then_succeeds():
     """Should retry on 429 with exponential backoff and succeed on next attempt."""
-    from unittest.mock import MagicMock
-
     from src.core.config import settings
 
     settings.API_TOKEN = "test-token"
@@ -103,14 +99,14 @@ def test_retries_on_rate_limit_then_succeeds():
     ok_response = MagicMock()
     ok_response.status_code = 200
     ok_response.raise_for_status = MagicMock()
-    ok_response.json.return_value = {
-        "data": [{"embedding": [0.1, 0.2], "index": 0}]
-    }
+    ok_response.json.return_value = {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
 
     import asyncio
 
-    with patch("src.services.embedding.httpx.AsyncClient") as mock_client_cls, \
-         patch("src.services.embedding.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with (
+        patch("src.services.embedding.httpx.AsyncClient") as mock_client_cls,
+        patch("src.services.embedding.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+    ):
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=[rate_limit_response, ok_response])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -126,9 +122,7 @@ def test_retries_on_rate_limit_then_succeeds():
 
 
 def test_rate_limit_retries_exhausted():
-    """Should return error when all rate-limit retries are exhausted."""
-    from unittest.mock import MagicMock
-
+    """Should return None per-entry when all retries for a batch are exhausted."""
     from src.core.config import settings
 
     settings.API_TOKEN = "test-token"
@@ -145,9 +139,6 @@ def test_rate_limit_retries_exhausted():
         "Rate limited", request=MagicMock(), response=rate_limit_response
     )
 
-    # Last attempt (after RATE_LIMIT_RETRIES) hits raise_for_status which raises
-    # We need RATE_LIMIT_RETRIES responses that don't raise (status_code=429 check passes)
-    # then one final that does raise
     non_raising_429 = MagicMock()
     non_raising_429.status_code = 429
 
@@ -157,8 +148,10 @@ def test_rate_limit_retries_exhausted():
 
     responses = [non_raising_429] * RATE_LIMIT_RETRIES + [rate_limit_response]
 
-    with patch("src.services.embedding.httpx.AsyncClient") as mock_client_cls, \
-         patch("src.services.embedding.asyncio.sleep", new_callable=AsyncMock):
+    with (
+        patch("src.services.embedding.httpx.AsyncClient") as mock_client_cls,
+        patch("src.services.embedding.asyncio.sleep", new_callable=AsyncMock),
+    ):
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=responses)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -167,15 +160,14 @@ def test_rate_limit_retries_exhausted():
 
         result = asyncio.run(generate_embeddings(["hello"]))
 
+    # Single batch, single text -- all failed, so entire result is None
     assert result.vectors is None
     assert result.error is not None
-    assert "429" in result.error
+    assert "failed" in result.error.lower()
 
 
 def test_returns_none_on_api_error():
-    """Should return None when the API returns an error."""
-    from unittest.mock import MagicMock
-
+    """Should return None per-entry when the API returns an error."""
     from src.core.config import settings
 
     settings.API_TOKEN = "test-token"
@@ -202,6 +194,53 @@ def test_returns_none_on_api_error():
 
         result = asyncio.run(generate_embeddings(["hello"]))
 
+    # Single batch, single text -- all failed, so entire result is None
     assert result.vectors is None
     assert result.error is not None
-    assert "500" in result.error
+    assert "failed" in result.error.lower()
+
+
+def test_partial_batch_failure_preserves_successful_embeddings():
+    """Should return successful embeddings even when some batches fail."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.EMBEDDING_MODEL = "test-embed-model"
+
+    import asyncio
+
+    import httpx
+
+    ok_response = MagicMock()
+    ok_response.status_code = 200
+    ok_response.raise_for_status = MagicMock()
+    ok_response.json.return_value = {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
+
+    error_response = MagicMock()
+    error_response.status_code = 500
+    error_response.text = "Internal Server Error"
+    error_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Server Error", request=MagicMock(), response=error_response
+    )
+
+    # Patch BATCH_SIZE to 1 so each text is its own batch
+    with (
+        patch("src.services.embedding.httpx.AsyncClient") as mock_client_cls,
+        patch("src.services.embedding.BATCH_SIZE", 1),
+    ):
+        mock_client = AsyncMock()
+        # First batch succeeds, second fails
+        mock_client.post = AsyncMock(side_effect=[ok_response, error_response])
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = asyncio.run(generate_embeddings(["hello", "world"]))
+
+    assert result.vectors is not None
+    assert len(result.vectors) == 2
+    assert result.vectors[0] == [0.1, 0.2]
+    assert result.vectors[1] is None
+    assert result.error is not None
+    assert "1/2 batches failed" in result.error

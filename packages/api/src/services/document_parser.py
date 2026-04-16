@@ -85,7 +85,7 @@ def _parse_with_docling(
 
     doc = doc_result.document
 
-    chunker = HybridChunker(tokenizer="word", max_tokens=chunk_size)
+    chunker = HybridChunker(max_tokens=chunk_size)
     raw_chunks = list(chunker.chunk(doc))
 
     chunks: list[ChunkData] = []

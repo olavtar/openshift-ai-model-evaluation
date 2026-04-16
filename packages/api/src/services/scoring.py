@@ -331,15 +331,17 @@ async def score_result(
 
     # Metrics that require expected_answer (ground truth)
     if expected_answer:
-        metrics.extend([
-            (
-                "context_precision_score",
-                ContextualPrecisionMetric(model=judge, threshold=0.0, async_mode=True),
-            ),
-            ("completeness_score", _completeness_metric(judge)),
-            ("correctness_score", _correctness_metric(judge)),
-            ("compliance_accuracy_score", _compliance_accuracy_metric(judge)),
-        ])
+        metrics.extend(
+            [
+                (
+                    "context_precision_score",
+                    ContextualPrecisionMetric(model=judge, threshold=0.0, async_mode=True),
+                ),
+                ("completeness_score", _completeness_metric(judge)),
+                ("correctness_score", _correctness_metric(judge)),
+                ("compliance_accuracy_score", _compliance_accuracy_metric(judge)),
+            ]
+        )
 
     # Run all metrics concurrently -- each is an independent LLM judge call
     async def _measure(name: str, metric):

@@ -25,9 +25,7 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: list[str] = ["http://localhost:5173"]
 
     # Database
-    DATABASE_URL: str = (
-        "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
-    )
+    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
 
     # Shared MaaS endpoint and API token (single platform)
     MAAS_ENDPOINT: str = ""
@@ -107,9 +105,7 @@ class Settings(BaseSettings):
     def validate_api_tokens(self) -> Self:
         """Warn if no API token is set."""
         if not self.API_TOKEN:
-            logger.warning(
-                "No API token set. Set API_TOKEN to enable model serving."
-            )
+            logger.warning("No API token set. Set API_TOKEN to enable model serving.")
         return self
 
 

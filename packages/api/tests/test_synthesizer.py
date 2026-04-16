@@ -69,12 +69,14 @@ def test_synthesize_returns_questions(client, _setup_db):
     _, async_session = _setup_db
     _seed_documents_and_chunks(async_session)
 
-    with _patch_httpx_synthesize([
-        {
-            "question": "What is artificial intelligence?",
-            "expected_answer": "AI is the simulation of human intelligence by machines.",
-        }
-    ]):
+    with _patch_httpx_synthesize(
+        [
+            {
+                "question": "What is artificial intelligence?",
+                "expected_answer": "AI is the simulation of human intelligence by machines.",
+            }
+        ]
+    ):
         response = client.post(
             "/evaluations/synthesize",
             json={"max_questions": 5},
@@ -105,9 +107,9 @@ def test_synthesize_filters_by_document_ids(client, _setup_db):
     _, async_session = _setup_db
     _seed_documents_and_chunks(async_session)
 
-    with _patch_httpx_synthesize([
-        {"question": "What is ML?", "expected_answer": "Machine learning is a subset of AI."}
-    ]):
+    with _patch_httpx_synthesize(
+        [{"question": "What is ML?", "expected_answer": "Machine learning is a subset of AI."}]
+    ):
         response = client.post(
             "/evaluations/synthesize",
             json={"document_ids": [1], "max_questions": 5},
@@ -187,9 +189,9 @@ def test_synthesize_with_fsi_profile(client, _setup_db):
     _, async_session = _setup_db
     _seed_documents_and_chunks(async_session)
 
-    with _patch_httpx_synthesize([
-        {"question": "What are the SEC reporting requirements?", "expected_answer": "Quarterly."}
-    ]) as mock_httpx:
+    with _patch_httpx_synthesize(
+        [{"question": "What are the SEC reporting requirements?", "expected_answer": "Quarterly."}]
+    ) as mock_httpx:
         response = client.post(
             "/evaluations/synthesize",
             json={"max_questions": 3, "profile_id": "fsi_compliance_v1"},
@@ -209,9 +211,9 @@ def test_synthesize_without_profile_uses_default_rules(client, _setup_db):
     _, async_session = _setup_db
     _seed_documents_and_chunks(async_session)
 
-    with _patch_httpx_synthesize([
-        {"question": "What is AI?", "expected_answer": "Artificial intelligence."}
-    ]) as mock_httpx:
+    with _patch_httpx_synthesize(
+        [{"question": "What is AI?", "expected_answer": "Artificial intelligence."}]
+    ) as mock_httpx:
         response = client.post(
             "/evaluations/synthesize",
             json={"max_questions": 3},
@@ -230,9 +232,9 @@ def test_synthesize_with_invalid_profile_falls_back_to_default(client, _setup_db
     _, async_session = _setup_db
     _seed_documents_and_chunks(async_session)
 
-    with _patch_httpx_synthesize([
-        {"question": "What is AI?", "expected_answer": "Artificial intelligence."}
-    ]) as mock_httpx:
+    with _patch_httpx_synthesize(
+        [{"question": "What is AI?", "expected_answer": "Artificial intelligence."}]
+    ) as mock_httpx:
         response = client.post(
             "/evaluations/synthesize",
             json={"max_questions": 3, "profile_id": "nonexistent_profile"},
@@ -249,7 +251,7 @@ def test_synthesize_with_invalid_profile_falls_back_to_default(client, _setup_db
 
 def test_domain_rules_mapping():
     """Should have FSI-specific rules and a default fallback."""
-    from src.services.synthesizer import _DOMAIN_RULES, _DEFAULT_DOMAIN_RULES
+    from src.services.synthesizer import _DEFAULT_DOMAIN_RULES, _DOMAIN_RULES
 
     assert "fsi" in _DOMAIN_RULES
     assert "SEC/FINRA" in _DOMAIN_RULES["fsi"]

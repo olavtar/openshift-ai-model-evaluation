@@ -197,10 +197,7 @@ def _reciprocal_rank_fusion(
 
     sorted_ids = sorted(rrf_scores, key=lambda cid: rrf_scores[cid], reverse=True)
 
-    return [
-        {**chunk_map[cid], "score": round(rrf_scores[cid], 4)}
-        for cid in sorted_ids
-    ]
+    return [{**chunk_map[cid], "score": round(rrf_scores[cid], 4)} for cid in sorted_ids]
 
 
 def _deduplicate_chunks(

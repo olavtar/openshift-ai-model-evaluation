@@ -84,9 +84,10 @@ def test_is_heading_numbered_section():
 def test_is_heading_short_title():
     """Should detect short title-like lines as headings."""
     assert _is_heading("Executive Summary") is True
-    assert _is_heading(
-        "This is a much longer line that is clearly body text and not a heading."
-    ) is False
+    assert (
+        _is_heading("This is a much longer line that is clearly body text and not a heading.")
+        is False
+    )
 
 
 def test_section_chunk_preserves_section_path():
