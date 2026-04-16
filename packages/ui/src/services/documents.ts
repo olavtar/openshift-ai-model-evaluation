@@ -37,6 +37,20 @@ export async function uploadDocument(file: File): Promise<DocumentUploadResponse
     return DocumentUploadResponseSchema.parse(data);
 }
 
+export async function ingestFromUrl(url: string): Promise<DocumentUploadResponse> {
+    const response = await fetch('/api/ingest/url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+    });
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail ?? 'Failed to ingest document from URL');
+    }
+    const data = await response.json();
+    return DocumentUploadResponseSchema.parse(data);
+}
+
 export async function deleteDocument(id: number): Promise<void> {
     const response = await fetch(`/api/documents/${id}`, {
         method: 'DELETE',
