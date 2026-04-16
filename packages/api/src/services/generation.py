@@ -42,8 +42,15 @@ def _summarize_upstream_error(response: httpx.Response) -> str:
 SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions based on the provided context. "
     "Use only the information from the context to answer. If the context does not contain "
-    "enough information to answer the question, say so clearly. "
-    "Cite the source document and page number when available."
+    "enough information to answer the question, say so clearly.\n\n"
+    "SYNTHESIS REQUIREMENTS:\n"
+    "- Synthesize across all RELEVANT documents in the context. Do not include documents "
+    "that do not contribute meaningful information.\n"
+    "- For each major point, cite the source document name and page number when available.\n"
+    "- When the context contains information from multiple documents, structure your response "
+    "to address each document's distinct contribution rather than collapsing into a single "
+    "narrative from one source.\n"
+    "- Do not fabricate connections between documents that are not supported by the context."
 )
 
 

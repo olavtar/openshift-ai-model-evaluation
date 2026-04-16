@@ -21,6 +21,7 @@ class RetrievalConfig(BaseModel):
     document_diversity_min: int = 3
     keyword_search_enabled: bool = True
     dedup_threshold: float = 0.85
+    diversity_relevance_threshold: float = 0.3
 
 
 class EvalProfile(BaseModel):

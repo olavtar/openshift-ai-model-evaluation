@@ -307,3 +307,58 @@ def test_retrieve_chunks_hybrid_with_dedup(mock_session):
     assert texts.count(shared_text) == 1
     # All unique chunks should be present
     assert len(result) == 3
+
+
+# --- Threshold-based diversity tests ---
+
+
+def test_diversity_skips_low_relevance_docs():
+    """Should not promote documents whose best chunk is below the relevance threshold."""
+    chunks = [
+        _chunk(1, doc="strong.pdf", score=0.8),
+        _chunk(2, doc="strong.pdf", score=0.7),
+        _chunk(3, doc="strong.pdf", score=0.6),
+        _chunk(4, doc="weak.pdf", score=0.1),  # below threshold
+        _chunk(5, doc="medium.pdf", score=0.4),
+    ]
+    result = _apply_diversity(
+        chunks, top_k=3, max_per_doc=None, diversity_min=3, relevance_threshold=0.3
+    )
+    docs = {c["source_document"] for c in result}
+    # weak.pdf should NOT get a guaranteed slot (score 0.1 < threshold 0.3)
+    # strong.pdf and medium.pdf should be present
+    assert "strong.pdf" in docs
+    assert "medium.pdf" in docs
+
+
+def test_diversity_guarantees_slots_for_relevant_docs():
+    """Should guarantee slots for all documents above the relevance threshold."""
+    chunks = [
+        _chunk(1, doc="a.pdf", score=0.9),
+        _chunk(2, doc="a.pdf", score=0.85),
+        _chunk(3, doc="a.pdf", score=0.8),
+        _chunk(4, doc="a.pdf", score=0.75),
+        _chunk(5, doc="b.pdf", score=0.5),
+        _chunk(6, doc="c.pdf", score=0.4),
+        _chunk(7, doc="d.pdf", score=0.35),
+    ]
+    result = _apply_diversity(
+        chunks, top_k=5, max_per_doc=None, diversity_min=5, relevance_threshold=0.3
+    )
+    docs = {c["source_document"] for c in result}
+    # All 4 docs are above threshold 0.3, so all should be represented
+    assert docs == {"a.pdf", "b.pdf", "c.pdf", "d.pdf"}
+
+
+def test_diversity_threshold_zero_promotes_all():
+    """Should promote all documents when threshold is 0.0 (effectively disabled)."""
+    chunks = [
+        _chunk(1, doc="a.pdf", score=0.9),
+        _chunk(2, doc="a.pdf", score=0.8),
+        _chunk(3, doc="b.pdf", score=0.01),
+    ]
+    result = _apply_diversity(
+        chunks, top_k=3, max_per_doc=None, diversity_min=3, relevance_threshold=0.0
+    )
+    docs = {c["source_document"] for c in result}
+    assert "b.pdf" in docs
