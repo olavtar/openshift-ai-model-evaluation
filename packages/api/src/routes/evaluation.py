@@ -253,6 +253,7 @@ async def _process_question(
                 result.coverage_gaps = await detect_coverage_gaps(
                     expected_answer=expected_answer,
                     actual_answer=gen_result["answer"],
+                    contexts=context_texts or None,
                 )
 
             # Compute per-question verdict if profile is loaded

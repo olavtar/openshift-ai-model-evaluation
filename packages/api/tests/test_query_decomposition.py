@@ -6,21 +6,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.query_decomposition import decompose_query
+from src.services.query_decomposition import (
+    _decomposition_cache,
+    decompose_query,
+)
+
+# A question long enough (8+ words) with broad signals to pass the gate
+BROAD_QUESTION = (
+    "What are the key requirements for ETF regulatory compliance across all documents?"
+)
+
+# A narrow question (short, no broad signals) that should be skipped
+NARROW_QUESTION = "What is Rule 6c-11?"
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings():
-    """Ensure settings are restored after each test."""
+def _reset_settings_and_cache():
+    """Ensure settings and cache are restored after each test."""
     from src.core.config import settings
 
     original_token = settings.API_TOKEN
     original_maas = settings.MAAS_ENDPOINT
     original_judge = settings.JUDGE_MODEL_NAME
+    _decomposition_cache.clear()
     yield
     settings.API_TOKEN = original_token
     settings.MAAS_ENDPOINT = original_maas
     settings.JUDGE_MODEL_NAME = original_judge
+    _decomposition_cache.clear()
 
 
 def test_returns_original_when_no_model():
@@ -30,8 +43,8 @@ def test_returns_original_when_no_model():
     settings.JUDGE_MODEL_NAME = ""
     settings.API_TOKEN = ""
 
-    result = asyncio.run(decompose_query("broad question"))
-    assert result == ["broad question"]
+    result = asyncio.run(decompose_query(BROAD_QUESTION))
+    assert result == [BROAD_QUESTION]
 
 
 def test_returns_original_when_no_token():
@@ -41,8 +54,8 @@ def test_returns_original_when_no_token():
     settings.JUDGE_MODEL_NAME = "test-model"
     settings.API_TOKEN = ""
 
-    result = asyncio.run(decompose_query("broad question"))
-    assert result == ["broad question"]
+    result = asyncio.run(decompose_query(BROAD_QUESTION))
+    assert result == [BROAD_QUESTION]
 
 
 def test_returns_sub_queries_on_success():
@@ -73,7 +86,7 @@ def test_returns_sub_queries_on_success():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(decompose_query("What is the ETF regulatory framework?"))
+        result = asyncio.run(decompose_query(BROAD_QUESTION))
 
     assert len(result) == 3
     assert "Rule 6c-11" in result[0]
@@ -102,9 +115,9 @@ def test_returns_original_on_invalid_json():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(decompose_query("broad question"))
+        result = asyncio.run(decompose_query(BROAD_QUESTION))
 
-    assert result == ["broad question"]
+    assert result == [BROAD_QUESTION]
 
 
 def test_returns_original_on_api_error():
@@ -131,9 +144,9 @@ def test_returns_original_on_api_error():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(decompose_query("broad question"))
+        result = asyncio.run(decompose_query(BROAD_QUESTION))
 
-    assert result == ["broad question"]
+    assert result == [BROAD_QUESTION]
 
 
 def test_respects_max_sub_queries():
@@ -164,7 +177,7 @@ def test_respects_max_sub_queries():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(decompose_query("broad question", max_sub_queries=3))
+        result = asyncio.run(decompose_query(BROAD_QUESTION, max_sub_queries=3))
 
     assert len(result) <= 3
 
@@ -191,6 +204,85 @@ def test_returns_original_on_empty_array():
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        result = asyncio.run(decompose_query("broad question"))
+        result = asyncio.run(decompose_query(BROAD_QUESTION))
 
-    assert result == ["broad question"]
+    assert result == [BROAD_QUESTION]
+
+
+# --- Decomposition gate tests ---
+
+
+def test_skips_short_questions():
+    """Should skip decomposition for questions with fewer than 8 words."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    result = asyncio.run(decompose_query(NARROW_QUESTION))
+    assert result == [NARROW_QUESTION]
+
+
+def test_skips_questions_without_broad_signals():
+    """Should skip decomposition when no broad-signal keywords are detected."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    # 8+ words but no broad-signal keywords
+    question = "Does the filing deadline apply to quarterly submissions this year?"
+    result = asyncio.run(decompose_query(question))
+    assert result == [question]
+
+
+# --- Cache tests ---
+
+
+def test_cache_returns_cached_result():
+    """Should return cached result without calling LLM again."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    # Pre-populate cache
+    cached_result = ["sub-q1", "sub-q2"]
+    _decomposition_cache[BROAD_QUESTION] = cached_result
+
+    # No mock needed -- should never call the LLM
+    result = asyncio.run(decompose_query(BROAD_QUESTION))
+    assert result == cached_result
+
+
+def test_cache_populated_after_success():
+    """Should cache results after successful decomposition."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "choices": [
+            {"message": {"content": '["sub-q1", "sub-q2"]'}}
+        ]
+    }
+
+    with patch("src.services.query_decomposition.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        asyncio.run(decompose_query(BROAD_QUESTION))
+
+    assert BROAD_QUESTION in _decomposition_cache
+    assert _decomposition_cache[BROAD_QUESTION] == ["sub-q1", "sub-q2"]

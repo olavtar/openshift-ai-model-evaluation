@@ -1,13 +1,13 @@
 # This project was developed with assistance from AI tools.
 """Coverage gap detection -- extracts key concepts from expected answers
-and checks which are present in the model's actual answer.
+and checks which are present in the model's actual answer, distinguishing
+between retrieval failures (concept not in context) and generation failures
+(concept in context but omitted by model).
 
 Uses the judge LLM to:
 1. Extract required concepts from the expected answer (Step 4)
 2. Check which concepts the actual answer covers (Step 5)
-
-Returns a structured report of covered vs missing concepts, explaining
-WHY completeness is low rather than just reporting the score.
+3. For missing concepts, check if they appear in the retrieval context
 """
 
 import json
@@ -53,20 +53,47 @@ ACTUAL ANSWER:
 """
 
 
+def _check_concept_in_contexts(concept: str, contexts: list[str]) -> bool:
+    """Check if a concept appears in retrieval contexts using keyword overlap.
+
+    Uses a simple word overlap heuristic -- if >40% of the concept's
+    significant words appear in any single context chunk, the concept
+    is considered present in retrieval.
+    """
+    if not contexts:
+        return False
+
+    # Extract significant words (3+ chars, lowered)
+    concept_words = {w.lower() for w in concept.split() if len(w) >= 3}
+    if not concept_words:
+        return False
+
+    combined = " ".join(contexts).lower()
+    matched = sum(1 for w in concept_words if w in combined)
+    return matched / len(concept_words) >= 0.4
+
+
 async def detect_coverage_gaps(
     expected_answer: str,
     actual_answer: str,
+    contexts: list[str] | None = None,
     model_name: str | None = None,
 ) -> dict | None:
     """Extract key concepts from expected answer and check coverage.
 
+    When contexts are provided, classifies each missing concept as either
+    a retrieval failure (not in context) or a generation failure (in context
+    but omitted by the model).
+
     Args:
         expected_answer: The ground truth answer.
         actual_answer: The model's generated answer.
+        contexts: Retrieved context chunks used for generation.
         model_name: Model to use for analysis. Defaults to the judge model.
 
     Returns:
-        Dict with 'concepts', 'covered', 'missing', 'coverage_ratio' keys,
+        Dict with 'concepts', 'covered', 'missing', 'coverage_ratio',
+        and optionally 'retrieval_failures' and 'generation_failures' keys,
         or None if analysis fails.
     """
     resolved_model = model_name or settings.resolved_judge_model_name
@@ -123,12 +150,24 @@ async def detect_coverage_gaps(
         missing = [c["text"] for c in concepts if c.get("status") == "missing"]
         all_texts = [c["text"] for c in concepts]
 
-        result = {
+        result: dict = {
             "concepts": all_texts,
             "covered": covered,
             "missing": missing,
             "coverage_ratio": len(covered) / len(all_texts) if all_texts else 1.0,
         }
+
+        # Classify missing concepts as retrieval or generation failures
+        if contexts is not None and missing:
+            retrieval_failures = []
+            generation_failures = []
+            for concept in missing:
+                if _check_concept_in_contexts(concept, contexts):
+                    generation_failures.append(concept)
+                else:
+                    retrieval_failures.append(concept)
+            result["retrieval_failures"] = retrieval_failures
+            result["generation_failures"] = generation_failures
 
         logger.info(
             "Coverage analysis: %d/%d concepts covered (%.0f%%), missing: %s",
@@ -137,6 +176,12 @@ async def detect_coverage_gaps(
             result["coverage_ratio"] * 100,
             missing[:5] if missing else "none",
         )
+        if contexts is not None and missing:
+            logger.info(
+                "Failure classification: %d retrieval, %d generation",
+                len(result.get("retrieval_failures", [])),
+                len(result.get("generation_failures", [])),
+            )
 
         return result
 
