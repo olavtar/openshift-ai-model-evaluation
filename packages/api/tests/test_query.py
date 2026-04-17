@@ -257,3 +257,87 @@ def test_query_passes_through_when_safe(client):
     assert data["safety_filtered"] is False
     assert data["answer"] == "Revenue was $1 billion."
     assert len(data["sources"]) == 1
+
+
+# --- Debug retrieval endpoint tests ---
+
+
+def test_debug_retrieval_returns_diagnostics(client):
+    """Should return sub-queries, document scores, and final chunks."""
+    mock_chunks = [
+        {
+            "id": 1,
+            "text": "ETF Rule 6c-11 content",
+            "source_document": "etf-rule.pdf",
+            "page_number": "1",
+            "score": 0.9,
+        },
+        {
+            "id": 2,
+            "text": "Form N-PORT filing requirements",
+            "source_document": "form-n-port.pdf",
+            "page_number": "3",
+            "score": 0.5,
+        },
+    ]
+
+    with (
+        patch(
+            "src.routes.query.decompose_query",
+            new_callable=AsyncMock,
+            return_value=["What is Rule 6c-11?", "What are N-PORT requirements?"],
+        ),
+        patch(
+            "src.routes.query.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=mock_chunks,
+        ),
+    ):
+        response = client.post(
+            "/query/debug",
+            json={"question": "What are ETF regulatory requirements?"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["sub_queries"]) == 2
+    assert data["total_candidates"] >= 2
+    assert len(data["documents"]) >= 1
+    assert len(data["final_chunks"]) >= 1
+    assert "diversity_threshold" in data
+    assert "top_k" in data
+
+
+def test_debug_retrieval_single_query_fallback(client):
+    """Should work when decomposition returns the original query."""
+    mock_chunks = [
+        {
+            "id": 1,
+            "text": "Some content",
+            "source_document": "doc.pdf",
+            "page_number": "1",
+            "score": 0.8,
+        },
+    ]
+
+    with (
+        patch(
+            "src.routes.query.decompose_query",
+            new_callable=AsyncMock,
+            return_value=["Simple question"],
+        ),
+        patch(
+            "src.routes.query.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=mock_chunks,
+        ),
+    ):
+        response = client.post(
+            "/query/debug",
+            json={"question": "Simple question"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["sub_queries"]) == 1
+    assert len(data["final_chunks"]) == 1

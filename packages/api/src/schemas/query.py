@@ -44,3 +44,34 @@ class QueryResponse(BaseModel):
     usage: UsageInfo | None = None
     low_confidence: bool = False
     safety_filtered: bool = False
+
+
+class DebugRetrievalRequest(BaseModel):
+    """Request body for the retrieval debug endpoint."""
+
+    question: str = Field(..., min_length=1, max_length=2000)
+    profile_id: str | None = Field(
+        default=None,
+        description="Evaluation profile to use for retrieval settings.",
+    )
+
+
+class DocumentScore(BaseModel):
+    """Per-document score summary for retrieval diagnostics."""
+
+    document: str
+    chunk_count: int
+    best_score: float
+    qualifies_for_diversity: bool
+
+
+class DebugRetrievalResponse(BaseModel):
+    """Detailed retrieval diagnostics for debugging chunk selection."""
+
+    question: str
+    sub_queries: list[str]
+    total_candidates: int
+    documents: list[DocumentScore]
+    final_chunks: list[SourceChunk]
+    diversity_threshold: float
+    top_k: int

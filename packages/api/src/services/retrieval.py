@@ -76,12 +76,33 @@ async def retrieve_chunks(
     else:
         merged = vector_results
 
+    # Log per-document score breakdown before diversity enforcement
+    doc_scores: dict[str, list[float]] = defaultdict(list)
+    for chunk in merged:
+        doc_scores[chunk["source_document"]].append(chunk.get("score", 0.0))
+    logger.info(
+        "Retrieval candidates: %d chunks from %d docs. Per-doc best scores: %s",
+        len(merged),
+        len(doc_scores),
+        {doc: round(max(scores), 4) for doc, scores in doc_scores.items()},
+    )
+
     # Remove near-duplicate chunks before diversity enforcement
     deduped = _deduplicate_chunks(merged, dedup_threshold)
 
     # Apply document diversity and per-doc caps
     final = _apply_diversity(
         deduped, top_k, max_per_doc, diversity_min, diversity_relevance_threshold
+    )
+
+    # Log final selection
+    final_docs: dict[str, int] = defaultdict(int)
+    for chunk in final:
+        final_docs[chunk["source_document"]] += 1
+    logger.info(
+        "Final retrieval: %d chunks, doc distribution: %s",
+        len(final),
+        dict(final_docs),
     )
 
     return final
@@ -338,12 +359,21 @@ def _apply_diversity(
                 break
             selected.append(chunk)
 
-        if len(qualifying_docs) > 1:
-            logger.debug(
-                "Diversity: %d qualifying docs (threshold=%.2f), %d guaranteed slots used",
-                len(qualifying_docs),
+        non_qualifying = set(best_score_per_doc.keys()) - qualifying_docs
+        logger.info(
+            "Diversity enforcement: %d/%d docs qualify (threshold=%.2f), "
+            "%d guaranteed slots used. Qualifying: %s",
+            len(qualifying_docs),
+            len(best_score_per_doc),
+            relevance_threshold,
+            len(seen_docs),
+            {doc: round(best_score_per_doc[doc], 4) for doc in qualifying_docs},
+        )
+        if non_qualifying:
+            logger.info(
+                "Non-qualifying docs (below threshold %.2f): %s",
                 relevance_threshold,
-                len(seen_docs),
+                {doc: round(best_score_per_doc[doc], 4) for doc in non_qualifying},
             )
 
         return selected[:top_k]
