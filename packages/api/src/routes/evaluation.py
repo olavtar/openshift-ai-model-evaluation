@@ -30,6 +30,7 @@ from ..schemas.evaluation import (
     SynthesizeRequest,
     SynthesizeResponse,
 )
+from ..services.coverage import detect_coverage_gaps
 from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, list_profiles, load_profile
 from ..services.query_decomposition import decompose_query
@@ -66,6 +67,7 @@ class _QuestionResult:
     tokens: int | None = None
     scores: dict = field(default_factory=dict)
     chunk_alignment_score: float | None = None
+    coverage_gaps: dict | None = None
     error: str | None = None
     verdict: QuestionVerdict | None = None
 
@@ -246,6 +248,13 @@ async def _process_question(
                     evaluated_model_name=model_name,
                 )
 
+            # Detect coverage gaps when expected_answer is available
+            if expected_answer and gen_result["answer"]:
+                result.coverage_gaps = await detect_coverage_gaps(
+                    expected_answer=expected_answer,
+                    actual_answer=gen_result["answer"],
+                )
+
             # Compute per-question verdict if profile is loaded
             if profile and result.scores:
                 result.verdict = compute_question_verdict(result.scores, profile)
@@ -345,6 +354,7 @@ async def _run_evaluation(
                         abstention_score=qr.scores.get("abstention_score"),
                         is_hallucination=qr.scores.get("is_hallucination"),
                         chunk_alignment_score=qr.chunk_alignment_score,
+                        coverage_gaps=qr.coverage_gaps,
                         total_tokens=qr.tokens,
                     )
 
@@ -692,6 +702,7 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         abstention_score=r.abstention_score,
         is_hallucination=r.is_hallucination,
         chunk_alignment_score=r.chunk_alignment_score,
+        coverage_gaps=r.coverage_gaps,
         verdict=r.verdict,
         fail_reasons=r.fail_reasons,
         total_tokens=r.total_tokens,
