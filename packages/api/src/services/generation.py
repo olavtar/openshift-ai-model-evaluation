@@ -44,12 +44,13 @@ SYSTEM_PROMPT = (
     "Use only the information from the context to answer. If the context does not contain "
     "enough information to answer the question, say so clearly.\n\n"
     "SYNTHESIS REQUIREMENTS:\n"
+    "- Organize your answer by topic, not by source document. Group related information "
+    "from different sources under the same topic heading.\n"
     "- Synthesize across all RELEVANT documents in the context. Do not include documents "
     "that do not contribute meaningful information.\n"
     "- For each major point, cite the source document name and page number when available.\n"
-    "- When the context contains information from multiple documents, structure your response "
-    "to address each document's distinct contribution rather than collapsing into a single "
-    "narrative from one source.\n"
+    "- Cover as many distinct topics as the context supports rather than focusing deeply "
+    "on just one area.\n"
     "- Do not fabricate connections between documents that are not supported by the context."
 )
 

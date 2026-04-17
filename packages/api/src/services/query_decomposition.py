@@ -17,7 +17,35 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 DECOMPOSITION_TIMEOUT = 30.0  # seconds
+
+# In-memory cache for decomposition results (avoids re-calling LLM for the
+# same question across model A and model B eval runs, or rerun scenarios).
+_decomposition_cache: dict[str, list[str]] = {}
+_CACHE_MAX_SIZE = 200
+
+
+def _get_cached_decomposition(question: str) -> list[str] | None:
+    return _decomposition_cache.get(question)
+
+
+def _cache_decomposition(question: str, sub_queries: list[str]) -> None:
+    if len(_decomposition_cache) >= _CACHE_MAX_SIZE:
+        # Evict oldest entry
+        oldest = next(iter(_decomposition_cache))
+        del _decomposition_cache[oldest]
+    _decomposition_cache[question] = sub_queries
 MAX_SUB_QUERIES = 5
+
+# Words per question below which decomposition is skipped (narrow questions)
+_MIN_WORDS_FOR_DECOMPOSITION = 8
+
+# Broad-question signal words that suggest decomposition would help
+_BROAD_SIGNALS = {
+    "key", "main", "overview", "requirements", "framework", "comprehensive",
+    "summary", "compare", "differences", "explain", "describe", "what are",
+    "how do", "regulatory", "compliance", "obligations", "all", "various",
+    "multiple", "different", "types", "categories",
+}
 
 DECOMPOSITION_PROMPT = """\
 You are a query decomposition assistant for a regulatory document retrieval system.
@@ -61,6 +89,24 @@ async def decompose_query(
     Returns:
         List of sub-query strings. Returns [question] on failure.
     """
+    # Check cache first
+    cached = _get_cached_decomposition(question)
+    if cached is not None:
+        logger.info("Using cached decomposition for: %.60s", question)
+        return cached[:max_sub_queries]
+
+    # Cheap gate: skip decomposition for narrow, single-concept questions
+    words = question.split()
+    if len(words) < _MIN_WORDS_FOR_DECOMPOSITION:
+        logger.info("Question too short for decomposition (%d words), using original", len(words))
+        return [question]
+
+    question_lower = question.lower()
+    has_broad_signal = any(signal in question_lower for signal in _BROAD_SIGNALS)
+    if not has_broad_signal:
+        logger.info("No broad-question signals detected, skipping decomposition")
+        return [question]
+
     resolved_model = model_name or settings.resolved_judge_model_name
     if not resolved_model:
         logger.info("No model configured for query decomposition, using original query")
@@ -108,12 +154,14 @@ async def decompose_query(
         if not result:
             return [question]
 
+        truncated = result[:max_sub_queries]
+        _cache_decomposition(question, truncated)
         logger.info(
             "Decomposed query into %d sub-queries: %s",
-            len(result),
-            [q[:60] + "..." if len(q) > 60 else q for q in result],
+            len(truncated),
+            [q[:60] + "..." if len(q) > 60 else q for q in truncated],
         )
-        return result[:max_sub_queries]
+        return truncated
 
     except json.JSONDecodeError:
         logger.warning("Failed to parse decomposition response as JSON, using original query")

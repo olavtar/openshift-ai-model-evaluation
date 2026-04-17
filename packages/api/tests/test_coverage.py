@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.coverage import detect_coverage_gaps
+from src.services.coverage import _check_concept_in_contexts, detect_coverage_gaps
 
 
 @pytest.fixture(autouse=True)
@@ -220,3 +220,117 @@ def test_returns_none_on_empty_concepts():
         )
 
     assert result is None
+
+
+# --- Concept-in-contexts heuristic tests ---
+
+
+def test_concept_found_in_contexts():
+    """Should detect concept when significant words appear in context."""
+    contexts = ["Form N-PORT requires quarterly filing within 60 days."]
+    assert _check_concept_in_contexts("N-PORT quarterly filing deadline", contexts) is True
+
+
+def test_concept_not_found_in_contexts():
+    """Should return False when concept words are absent from context."""
+    contexts = ["Rule 6c-11 governs ETF operations and structure."]
+    assert _check_concept_in_contexts("N-PORT quarterly filing deadline", contexts) is False
+
+
+def test_concept_empty_contexts():
+    """Should return False when contexts list is empty."""
+    assert _check_concept_in_contexts("any concept", []) is False
+
+
+# --- Retrieval vs generation failure classification tests ---
+
+
+def test_classifies_retrieval_and_generation_failures():
+    """Should classify missing concepts as retrieval or generation failures."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": '{"concepts": ['
+                    '{"text": "Rule 6c-11 provisions", "status": "covered"}, '
+                    '{"text": "N-PORT filing deadlines", "status": "missing"}, '
+                    '{"text": "SAI disclosure requirements", "status": "missing"}'
+                    "]}"
+                }
+            }
+        ]
+    }
+
+    # N-PORT appears in context (generation failure), SAI does not (retrieval failure)
+    contexts = [
+        "Form N-PORT requires quarterly filing of portfolio holdings within 60 days.",
+        "Rule 6c-11 governs ETF operations.",
+    ]
+
+    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = asyncio.run(
+            detect_coverage_gaps(
+                "Rule 6c-11, N-PORT deadlines, SAI disclosures",
+                "The answer only covers Rule 6c-11.",
+                contexts=contexts,
+            )
+        )
+
+    assert result is not None
+    assert len(result["missing"]) == 2
+    assert "N-PORT filing deadlines" in result["generation_failures"]
+    assert "SAI disclosure requirements" in result["retrieval_failures"]
+
+
+def test_no_failure_classification_without_contexts():
+    """Should not include failure classification when contexts is None."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": '{"concepts": ['
+                    '{"text": "concept A", "status": "missing"}'
+                    "]}"
+                }
+            }
+        ]
+    }
+
+    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client_cls.return_value = mock_client
+
+        result = asyncio.run(
+            detect_coverage_gaps("expected", "actual")
+        )
+
+    assert result is not None
+    assert "retrieval_failures" not in result
+    assert "generation_failures" not in result
