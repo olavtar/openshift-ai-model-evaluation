@@ -33,7 +33,7 @@ from ..schemas.evaluation import (
 from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, list_profiles, load_profile
 from ..services.query_decomposition import decompose_query
-from ..services.retrieval import _deduplicate_chunks, retrieve_chunks
+from ..services.retrieval import _apply_diversity, _deduplicate_chunks, retrieve_chunks
 from ..services.safety import check_input_safety
 from ..services.scoring import compute_chunk_alignment, score_result
 from ..services.synthesizer import generate_questions
@@ -136,23 +136,63 @@ async def _process_question(
                     )
                 else:
                     # Run retrieval for each sub-query and merge
+                    logger.info(
+                        "Query decomposed into %d sub-queries: %s",
+                        len(sub_queries),
+                        sub_queries,
+                    )
                     all_chunks: list[dict] = []
                     seen_ids: set[int] = set()
                     for sq in sub_queries:
                         sq_chunks = await retrieve_chunks(
                             query=sq, session=retrieval_session, **retrieval_kwargs
                         )
+                        new_count = 0
                         for chunk in sq_chunks:
                             if chunk["id"] not in seen_ids:
                                 all_chunks.append(chunk)
                                 seen_ids.add(chunk["id"])
+                                new_count += 1
+                        logger.info(
+                            "Sub-query '%s': %d chunks retrieved, %d new (not seen before)",
+                            sq[:80],
+                            len(sq_chunks),
+                            new_count,
+                        )
 
-                    # Sort merged results by score descending, dedup, and trim
+                    # Sort merged results by score descending and dedup
                     all_chunks.sort(key=lambda c: c.get("score", 0.0), reverse=True)
                     dedup_threshold = retrieval_kwargs.get("dedup_threshold", 0.85)
                     all_chunks = _deduplicate_chunks(all_chunks, dedup_threshold)
+
+                    # Apply diversity enforcement on merged results (not just
+                    # per-sub-query). Without this, sorting by score and taking
+                    # top_k re-concentrates on the highest-scoring document.
                     top_k = retrieval_kwargs.get("top_k", 10)
-                    chunks = all_chunks[:top_k]
+                    diversity_min = retrieval_kwargs.get("diversity_min", 3)
+                    max_per_doc = retrieval_kwargs.get("max_per_doc")
+                    threshold = retrieval_kwargs.get(
+                        "diversity_relevance_threshold", 0.3
+                    )
+                    chunks = _apply_diversity(
+                        all_chunks,
+                        top_k=top_k,
+                        max_per_doc=max_per_doc,
+                        diversity_min=diversity_min,
+                        relevance_threshold=threshold,
+                    )
+
+                    # Log final document distribution
+                    doc_counts: dict[str, int] = {}
+                    for c in chunks:
+                        doc = c.get("source_document", "unknown")
+                        doc_counts[doc] = doc_counts.get(doc, 0) + 1
+                    logger.info(
+                        "Post-merge retrieval: %d chunks from %d documents: %s",
+                        len(chunks),
+                        len(doc_counts),
+                        doc_counts,
+                    )
 
             if eval_run_id in _cancelled_runs:
                 return result
