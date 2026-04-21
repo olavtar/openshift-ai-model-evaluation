@@ -2,25 +2,69 @@
 """Tests for coverage gap detection service."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.coverage import _check_concept_in_contexts, detect_coverage_gaps
+from src.services.coverage import (
+    _check_concept_in_contexts,
+    _concept_cache,
+    _concept_cache_key,
+    detect_coverage_gaps,
+)
 
 
 @pytest.fixture(autouse=True)
-def _reset_settings():
-    """Ensure settings are restored after each test."""
+def _reset_settings_and_cache():
+    """Ensure settings and cache are restored after each test."""
     from src.core.config import settings
 
     original_token = settings.API_TOKEN
     original_maas = settings.MAAS_ENDPOINT
     original_judge = settings.JUDGE_MODEL_NAME
+    _concept_cache.clear()
     yield
     settings.API_TOKEN = original_token
     settings.MAAS_ENDPOINT = original_maas
     settings.JUDGE_MODEL_NAME = original_judge
+    _concept_cache.clear()
+
+
+def _make_mock_response(content: str) -> MagicMock:
+    """Create a mock HTTP response with the given content."""
+    mock = MagicMock()
+    mock.status_code = 200
+    mock.raise_for_status = MagicMock()
+    mock.json.return_value = {
+        "choices": [{"message": {"content": content}}]
+    }
+    return mock
+
+
+def _setup_settings():
+    """Configure settings for tests that need a model."""
+    from src.core.config import settings
+
+    settings.API_TOKEN = "test-token"
+    settings.MAAS_ENDPOINT = "https://example.com"
+    settings.JUDGE_MODEL_NAME = "test-model"
+
+
+def _patch_two_phase(extract_content: str, check_content: str):
+    """Patch httpx to return extract_content on first call, check_content on second."""
+    extract_resp = _make_mock_response(extract_content)
+    check_resp = _make_mock_response(check_content)
+
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = [extract_resp, check_resp]
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    return patch(
+        "src.services.coverage.httpx.AsyncClient",
+        return_value=mock_client,
+    )
 
 
 def test_returns_none_when_no_model():
@@ -51,36 +95,12 @@ def test_returns_none_when_no_token():
 
 def test_returns_coverage_report_on_success():
     """Should return structured coverage report with concepts, covered, and missing."""
-    from src.core.config import settings
+    _setup_settings()
 
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"concepts": ['
-                    '{"text": "Rule 6c-11 provisions", "status": "covered"}, '
-                    '{"text": "N-PORT filing deadlines", "status": "missing"}, '
-                    '{"text": "SAI disclosure requirements", "status": "covered"}'
-                    "]}"
-                }
-            }
-        ]
-    }
-
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _patch_two_phase(
+        '["Rule 6c-11 provisions", "N-PORT filing deadlines", "SAI disclosure requirements"]',
+        '["covered", "missing", "covered"]',
+    ):
         result = asyncio.run(
             detect_coverage_gaps(
                 "Rule 6c-11 provisions, N-PORT filing deadlines, SAI disclosures",
@@ -96,28 +116,16 @@ def test_returns_coverage_report_on_success():
     assert result["coverage_ratio"] == pytest.approx(2 / 3)
 
 
-def test_returns_none_on_invalid_json():
-    """Should return None when LLM returns invalid JSON."""
-    from src.core.config import settings
+def test_returns_none_on_invalid_json_extraction():
+    """Should return None when LLM returns invalid JSON for concept extraction."""
+    _setup_settings()
 
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _make_mock_response("This is not JSON")
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": "This is not JSON"}}]
-    }
-
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client):
         result = asyncio.run(
             detect_coverage_gaps("expected", "actual")
         )
@@ -127,11 +135,7 @@ def test_returns_none_on_invalid_json():
 
 def test_returns_none_on_api_error():
     """Should return None when API call fails."""
-    from src.core.config import settings
-
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
+    _setup_settings()
 
     import httpx
 
@@ -142,13 +146,12 @@ def test_returns_none_on_api_error():
         "Server Error", request=MagicMock(), response=mock_response
     )
 
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client):
         result = asyncio.run(
             detect_coverage_gaps("expected", "actual")
         )
@@ -158,63 +161,30 @@ def test_returns_none_on_api_error():
 
 def test_handles_markdown_fenced_json():
     """Should strip markdown fencing and parse the JSON."""
-    from src.core.config import settings
+    _setup_settings()
 
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
+    fenced_concepts = '```json\n["concept A", "concept B"]\n```'
 
-    fenced_content = (
-        "```json\n"
-        '{"concepts": [{"text": "concept A", "status": "covered"}]}\n'
-        "```"
-    )
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": fenced_content}}]
-    }
-
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _patch_two_phase(fenced_concepts, '["covered", "covered"]'):
         result = asyncio.run(
             detect_coverage_gaps("expected", "actual")
         )
 
     assert result is not None
-    assert len(result["concepts"]) == 1
+    assert len(result["concepts"]) == 2
     assert result["coverage_ratio"] == 1.0
 
 
 def test_returns_none_on_empty_concepts():
     """Should return None when LLM returns empty concepts list."""
-    from src.core.config import settings
+    _setup_settings()
 
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
+    mock_client = AsyncMock()
+    mock_client.post.return_value = _make_mock_response("[]")
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": '{"concepts": []}'}}]
-    }
-
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client):
         result = asyncio.run(
             detect_coverage_gaps("expected", "actual")
         )
@@ -222,7 +192,74 @@ def test_returns_none_on_empty_concepts():
     assert result is None
 
 
-# --- Concept-in-contexts heuristic tests ---
+# --- Concept caching tests ---
+
+
+def test_concept_cache_reused_across_calls():
+    """Should reuse cached concepts for the same expected answer."""
+    _setup_settings()
+
+    expected = "Rule 6c-11 provisions and N-PORT deadlines"
+    concepts = ["Rule 6c-11 provisions", "N-PORT filing deadlines"]
+
+    # First call: extract + check (2 LLM calls)
+    with _patch_two_phase(
+        json.dumps(concepts),
+        '["covered", "missing"]',
+    ):
+        result1 = asyncio.run(
+            detect_coverage_gaps(expected, "answer A")
+        )
+
+    assert result1 is not None
+    assert _concept_cache_key(None, expected) in _concept_cache
+
+    # Second call: only check (1 LLM call), concepts from cache
+    check_resp = _make_mock_response('["missing", "covered"]')
+    mock_client2 = AsyncMock()
+    mock_client2.post.return_value = check_resp
+    mock_client2.__aenter__ = AsyncMock(return_value=mock_client2)
+    mock_client2.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client2):
+        result2 = asyncio.run(
+            detect_coverage_gaps(expected, "answer B")
+        )
+
+    assert result2 is not None
+    # Same concepts, different coverage
+    assert result2["concepts"] == result1["concepts"]
+    assert result2["covered"] == ["N-PORT filing deadlines"]
+    assert result2["missing"] == ["Rule 6c-11 provisions"]
+    # Only 1 LLM call (check only, no extraction)
+    assert mock_client2.post.call_count == 1
+
+
+def test_concept_cache_separates_by_question():
+    """Same expected answer under different questions should not share extraction cache."""
+    _setup_settings()
+
+    expected = "Same gold text"
+    concepts_q1 = ["concept for Q1"]
+    concepts_q2 = ["concept for Q2"]
+
+    with _patch_two_phase(json.dumps(concepts_q1), '["covered"]'):
+        r1 = asyncio.run(
+            detect_coverage_gaps(expected, "answer", question="Question one?")
+        )
+
+    assert r1 is not None
+    assert _concept_cache_key("Question one?", expected) in _concept_cache
+
+    with _patch_two_phase(json.dumps(concepts_q2), '["missing"]'):
+        r2 = asyncio.run(
+            detect_coverage_gaps(expected, "answer", question="Question two?")
+        )
+
+    assert r2 is not None
+    assert r2["concepts"] == concepts_q2
+    assert _concept_cache_key("Question two?", expected) in _concept_cache
+    assert len(_concept_cache) == 2
 
 
 def test_concept_found_in_contexts():
@@ -247,28 +284,7 @@ def test_concept_empty_contexts():
 
 def test_classifies_retrieval_and_generation_failures():
     """Should classify missing concepts as retrieval or generation failures."""
-    from src.core.config import settings
-
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"concepts": ['
-                    '{"text": "Rule 6c-11 provisions", "status": "covered"}, '
-                    '{"text": "N-PORT filing deadlines", "status": "missing"}, '
-                    '{"text": "SAI disclosure requirements", "status": "missing"}'
-                    "]}"
-                }
-            }
-        ]
-    }
+    _setup_settings()
 
     # N-PORT appears in context (generation failure), SAI does not (retrieval failure)
     contexts = [
@@ -276,13 +292,10 @@ def test_classifies_retrieval_and_generation_failures():
         "Rule 6c-11 governs ETF operations.",
     ]
 
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _patch_two_phase(
+        '["Rule 6c-11 provisions", "N-PORT filing deadlines", "SAI disclosure requirements"]',
+        '["covered", "missing", "missing"]',
+    ):
         result = asyncio.run(
             detect_coverage_gaps(
                 "Rule 6c-11, N-PORT deadlines, SAI disclosures",
@@ -299,34 +312,12 @@ def test_classifies_retrieval_and_generation_failures():
 
 def test_no_failure_classification_without_contexts():
     """Should not include failure classification when contexts is None."""
-    from src.core.config import settings
+    _setup_settings()
 
-    settings.API_TOKEN = "test-token"
-    settings.MAAS_ENDPOINT = "https://example.com"
-    settings.JUDGE_MODEL_NAME = "test-model"
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [
-            {
-                "message": {
-                    "content": '{"concepts": ['
-                    '{"text": "concept A", "status": "missing"}'
-                    "]}"
-                }
-            }
-        ]
-    }
-
-    with patch("src.services.coverage.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
-
+    with _patch_two_phase(
+        '["concept A"]',
+        '["missing"]',
+    ):
         result = asyncio.run(
             detect_coverage_gaps("expected", "actual")
         )

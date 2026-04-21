@@ -22,6 +22,12 @@ class RetrievalConfig(BaseModel):
     keyword_search_enabled: bool = True
     dedup_threshold: float = 0.85
     diversity_relevance_threshold: float = 0.3
+    # After merge + document diversity, optionally force each sub-query to
+    # contribute at least one chunk (see evaluation._process_question).
+    ensure_sub_query_representation: bool = True
+    # Swap-in chunk must score at least diversity_relevance_threshold * this
+    # vs bare threshold alone, and must beat the evicted chunk (see evaluation).
+    sub_query_swap_score_multiplier: float = 1.1
 
 
 class EvalProfile(BaseModel):

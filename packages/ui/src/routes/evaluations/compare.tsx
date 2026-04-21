@@ -16,7 +16,7 @@ import {
     Info,
 } from 'lucide-react';
 import { useDocuments } from '../../hooks/documents';
-import type { ComparisonMetric, ComparisonResponse, EvalResult, EvalRun } from '../../schemas/evaluation';
+import type { ComparisonMetric, ComparisonResponse, CoverageGaps, EvalResult, EvalRun } from '../../schemas/evaluation';
 import { formatScore, formatLatency, formatMetricValue } from '../../lib/format';
 
 interface CompareSearch {
@@ -160,6 +160,36 @@ function MetricRow({
     );
 }
 
+function CoverageGapsSummary({ gaps }: { gaps: CoverageGaps | null | undefined }) {
+    if (!gaps || gaps.missing.length === 0) return null;
+
+    return (
+        <div className="mt-2 rounded border border-amber-200 bg-amber-50/50 px-2.5 py-1.5 dark:border-amber-900 dark:bg-amber-950/20">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                Missing ({gaps.missing.length})
+            </span>
+            <p className="mt-0.5 text-xs text-amber-900 dark:text-amber-200">
+                {gaps.missing.join(', ')}
+            </p>
+            {((gaps.retrieval_failures && gaps.retrieval_failures.length > 0) ||
+                (gaps.generation_failures && gaps.generation_failures.length > 0)) && (
+                <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                    {gaps.retrieval_failures && gaps.retrieval_failures.length > 0 && (
+                        <span className="text-rose-700 dark:text-rose-400">
+                            Retrieval gaps: {gaps.retrieval_failures.length}
+                        </span>
+                    )}
+                    {gaps.generation_failures && gaps.generation_failures.length > 0 && (
+                        <span className="text-orange-700 dark:text-orange-400">
+                            Generation gaps: {gaps.generation_failures.length}
+                        </span>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 function QuestionRow({
     question,
     expectedAnswer,
@@ -219,6 +249,7 @@ function QuestionRow({
                                     Hallucination
                                 </span>
                             )}
+                            <CoverageGapsSummary gaps={resultA.coverage_gaps} />
                         </>
                     ) : (
                         <span className="text-sm text-muted-foreground">Not evaluated</span>
@@ -245,6 +276,7 @@ function QuestionRow({
                                     Hallucination
                                 </span>
                             )}
+                            <CoverageGapsSummary gaps={resultB.coverage_gaps} />
                         </>
                     ) : (
                         <span className="text-sm text-muted-foreground">Not evaluated</span>

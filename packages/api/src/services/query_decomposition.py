@@ -34,7 +34,7 @@ def _cache_decomposition(question: str, sub_queries: list[str]) -> None:
         oldest = next(iter(_decomposition_cache))
         del _decomposition_cache[oldest]
     _decomposition_cache[question] = sub_queries
-MAX_SUB_QUERIES = 5
+MAX_SUB_QUERIES = 7
 
 # Words per question below which decomposition is skipped (narrow questions)
 _MIN_WORDS_FOR_DECOMPOSITION = 8
@@ -61,11 +61,13 @@ Respond with a JSON array of strings. No other text.
 
 Example:
 Question: "What are the key requirements for ETF regulatory compliance?"
-Output: ["What are the provisions of Rule 6c-11 governing ETF operations?", \
+Output: ["What registration and prospectus requirements apply to ETFs under Form N-1A?", \
 "What disclosures are required in an ETF's Statement of Additional Information (SAI)?", \
-"How do creation and redemption mechanisms work for ETFs under current regulations?", \
+"How do creation and redemption mechanisms work for ETFs, including authorized participants and creation units?", \
 "What periodic reporting requirements apply to ETFs under Forms N-CSR, N-PORT, and N-CEN?", \
-"What registration and prospectus requirements apply to ETFs under Form N-1A?"]
+"What are the provisions of Rule 6c-11 regarding ETF transparency and website disclosures?", \
+"What are the requirements for ETF net asset value (NAV) calculation and portfolio holdings disclosure?", \
+"What premium/discount and bid-ask spread disclosure requirements apply to ETFs?"]
 """
 
 

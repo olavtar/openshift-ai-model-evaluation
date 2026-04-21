@@ -4,9 +4,10 @@ and checks which are present in the model's actual answer, distinguishing
 between retrieval failures (concept not in context) and generation failures
 (concept in context but omitted by model).
 
-Uses the judge LLM to:
-1. Extract required concepts from the expected answer (Step 4)
-2. Check which concepts the actual answer covers (Step 5)
+Two-phase approach for consistency:
+1. Extract concepts from the expected answer (cached so the same expected
+   answer always produces the same concept list across runs)
+2. Check which concepts the actual answer covers (per-run)
 3. For missing concepts, check if they appear in the retrieval context
 """
 
@@ -21,32 +22,66 @@ logger = logging.getLogger(__name__)
 
 COVERAGE_TIMEOUT = 60.0  # seconds
 
+# Cache extracted concepts so the same (question, expected answer) pair
+# always produces the same concept list across model runs.
+_concept_cache: dict[str, list[str]] = {}
+_CONCEPT_CACHE_MAX = 200
 
-EXTRACT_AND_CHECK_PROMPT = """\
-You are an evaluation analyst for regulatory document Q&A.
 
-Given an EXPECTED ANSWER and an ACTUAL ANSWER, do two things:
+def _concept_cache_key(question: str | None, expected_answer: str) -> str:
+    """Isolate cache entries when the same gold text appears under different questions."""
+    q = (question or "").strip()
+    return f"{q}\x00{expected_answer}"
 
-1. Extract the key concepts, requirements, or facts from the EXPECTED ANSWER.
-   Each concept should be a short phrase (5-15 words) that captures one distinct
-   piece of information.
 
-2. For each concept, determine if the ACTUAL ANSWER covers it:
-   - "covered" = the concept is present or adequately addressed
-   - "missing" = the concept is absent or not addressed
+EXTRACT_CONCEPTS_PROMPT = """\
+You are an evaluation analyst. Break the EXPECTED ANSWER into separate, \
+individual concepts for coverage checking.
 
-Respond with a JSON object:
-{{
-  "concepts": [
-    {{"text": "concept description", "status": "covered"}},
-    {{"text": "concept description", "status": "missing"}}
-  ]
-}}
+RULES:
+- Each concept MUST be a short phrase (at most 15 words).
+- Each concept captures exactly ONE distinct fact, requirement, or obligation \
+that is explicitly stated in the expected answer.
+- Extract every distinct claim the expected answer actually contains. Do NOT \
+pad the list: if the text supports 4 concepts, return 4; if it supports 12, \
+return 12. Never invent concepts that are not grounded in the expected answer.
+- Do NOT merge multiple distinct claims into one concept.
+- Do NOT return the entire expected answer as a single concept.
+- For short gold answers, fewer concepts is correct; for long answers, more \
+is appropriate. Return at most 15 concepts. If the text has more distinct \
+facts, merge closely related ones into broader concepts.
+- Order concepts by importance: put the core requirements and key \
+distinguishing facts first, and minor details or qualifications last.
 
-No other text. Just the JSON object.
+Respond with a JSON array of short strings. No other text.
+
+Example:
+EXPECTED ANSWER: "ETFs must file Form N-1A and publish daily NAV. The SAI \
+provides details on portfolio holdings and tax information."
+Output: [
+  "ETFs must file Form N-1A for registration",
+  "ETFs must publish daily net asset value (NAV)",
+  "SAI provides details on portfolio holdings",
+  "SAI provides tax information"
+]
 
 EXPECTED ANSWER:
 {expected_answer}
+"""
+
+CHECK_COVERAGE_PROMPT = """\
+You are an evaluation analyst. Given a list of REQUIRED CONCEPTS and an \
+ACTUAL ANSWER, determine which concepts the answer covers.
+
+For each concept, respond with:
+- "covered" if the concept is present or adequately addressed
+- "missing" if the concept is absent or not addressed
+
+Respond with a JSON array matching the order of the input concepts. \
+Each element should be "covered" or "missing". No other text.
+
+REQUIRED CONCEPTS:
+{concepts_json}
 
 ACTUAL ANSWER:
 {actual_answer}
@@ -73,13 +108,175 @@ def _check_concept_in_contexts(concept: str, contexts: list[str]) -> bool:
     return matched / len(concept_words) >= 0.4
 
 
+def _strip_markdown_fencing(content: str) -> str:
+    """Remove markdown code fencing if present."""
+    if content.startswith("```"):
+        lines = content.split("\n")
+        lines = [line for line in lines if not line.strip().startswith("```")]
+        return "\n".join(lines).strip()
+    return content
+
+
+async def _extract_concepts(
+    expected_answer: str,
+    model_name: str,
+    endpoint: str,
+    token: str,
+    *,
+    cache_key: str,
+) -> list[str] | None:
+    """Extract key concepts from an expected answer (Phase 1).
+
+    Results are cached so the same cache key always produces the same concept
+    list, regardless of which model's actual answer is being evaluated.
+    """
+    cached = _concept_cache.get(cache_key)
+    if cached is not None:
+        logger.info("Using cached concept extraction (%d concepts)", len(cached))
+        return cached
+
+    url = f"{endpoint}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": EXTRACT_CONCEPTS_PROMPT.format(
+                    expected_answer=expected_answer,
+                ),
+            },
+        ],
+        "temperature": 0.0,
+        "max_tokens": 512,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        content = _strip_markdown_fencing(content)
+
+        concepts = json.loads(content)
+        if not isinstance(concepts, list) or not concepts:
+            logger.warning("Concept extraction returned non-list or empty")
+            return None
+
+        result = [c.strip() for c in concepts if isinstance(c, str) and c.strip()]
+        if not result:
+            return None
+
+        if len(result) > 15:
+            logger.info(
+                "Concept extraction returned %d concepts (prompt asks for ≤15), "
+                "keeping all to avoid dropping relevant ones",
+                len(result),
+            )
+
+        # Cache the result
+        if len(_concept_cache) >= _CONCEPT_CACHE_MAX:
+            oldest = next(iter(_concept_cache))
+            del _concept_cache[oldest]
+        _concept_cache[cache_key] = result
+
+        logger.info("Extracted %d concepts from expected answer", len(result))
+        return result
+
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse concept extraction response as JSON")
+        return None
+    except Exception as e:
+        logger.warning("Concept extraction failed (%s)", e)
+        return None
+
+
+async def _check_coverage(
+    concepts: list[str],
+    actual_answer: str,
+    model_name: str,
+    endpoint: str,
+    token: str,
+) -> list[str] | None:
+    """Check which concepts the actual answer covers (Phase 2).
+
+    Returns a list of statuses ("covered"/"missing") matching the
+    concept list order, or None on failure.
+    """
+    url = f"{endpoint}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": CHECK_COVERAGE_PROMPT.format(
+                    concepts_json=json.dumps(concepts),
+                    actual_answer=actual_answer,
+                ),
+            },
+        ],
+        "temperature": 0.0,
+        "max_tokens": 512,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        content = _strip_markdown_fencing(content)
+
+        statuses = json.loads(content)
+        if not isinstance(statuses, list):
+            logger.warning("Coverage check returned non-list")
+            return None
+
+        # Validate and normalize
+        valid = []
+        for s in statuses:
+            if isinstance(s, str) and s.strip().lower() in ("covered", "missing"):
+                valid.append(s.strip().lower())
+            else:
+                valid.append("missing")  # default to missing if unclear
+
+        # Pad or truncate to match concept count
+        while len(valid) < len(concepts):
+            valid.append("missing")
+        valid = valid[: len(concepts)]
+
+        return valid
+
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse coverage check response as JSON")
+        return None
+    except Exception as e:
+        logger.warning("Coverage check failed (%s)", e)
+        return None
+
+
 async def detect_coverage_gaps(
     expected_answer: str,
     actual_answer: str,
     contexts: list[str] | None = None,
     model_name: str | None = None,
+    question: str | None = None,
 ) -> dict | None:
     """Extract key concepts from expected answer and check coverage.
+
+    Uses a two-phase approach: concept extraction is cached so the same
+    (question, expected answer) pair always produces the same concept list.
+    Coverage checking runs per actual answer.
 
     When contexts are provided, classifies each missing concept as either
     a retrieval failure (not in context) or a generation failure (in context
@@ -90,6 +287,8 @@ async def detect_coverage_gaps(
         actual_answer: The model's generated answer.
         contexts: Retrieved context chunks used for generation.
         model_name: Model to use for analysis. Defaults to the judge model.
+        question: Optional eval question; included in the concept cache key when
+            the same expected answer appears under different questions.
 
     Returns:
         Dict with 'concepts', 'covered', 'missing', 'coverage_ratio',
@@ -106,88 +305,57 @@ async def detect_coverage_gaps(
         logger.info("No API token for coverage model, skipping")
         return None
 
-    url = f"{model_cfg['endpoint']}/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {model_cfg['token']}",
-        "Content-Type": "application/json",
+    endpoint = model_cfg["endpoint"]
+    token = model_cfg["token"]
+
+    cache_key = _concept_cache_key(question, expected_answer)
+
+    # Phase 1: extract concepts (cached)
+    concepts = await _extract_concepts(
+        expected_answer, resolved_model, endpoint, token, cache_key=cache_key
+    )
+    if not concepts:
+        return None
+
+    # Phase 2: check coverage
+    statuses = await _check_coverage(concepts, actual_answer, resolved_model, endpoint, token)
+    if not statuses:
+        return None
+
+    covered = [c for c, s in zip(concepts, statuses) if s == "covered"]
+    missing = [c for c, s in zip(concepts, statuses) if s == "missing"]
+
+    result: dict = {
+        "concepts": concepts,
+        "covered": covered,
+        "missing": missing,
+        "coverage_ratio": len(covered) / len(concepts) if concepts else 1.0,
     }
-    payload = {
-        "model": resolved_model,
-        "messages": [
-            {
-                "role": "user",
-                "content": EXTRACT_AND_CHECK_PROMPT.format(
-                    expected_answer=expected_answer,
-                    actual_answer=actual_answer,
-                ),
-            },
-        ],
-        "temperature": 0.0,
-        "max_tokens": 1024,
-    }
 
-    try:
-        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+    # Classify missing concepts as retrieval or generation failures
+    if contexts is not None and missing:
+        retrieval_failures = []
+        generation_failures = []
+        for concept in missing:
+            if _check_concept_in_contexts(concept, contexts):
+                generation_failures.append(concept)
+            else:
+                retrieval_failures.append(concept)
+        result["retrieval_failures"] = retrieval_failures
+        result["generation_failures"] = generation_failures
 
-        data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
-
-        # Strip markdown fencing if present
-        if content.startswith("```"):
-            lines = content.split("\n")
-            lines = [line for line in lines if not line.strip().startswith("```")]
-            content = "\n".join(lines).strip()
-
-        parsed = json.loads(content)
-        concepts = parsed.get("concepts", [])
-        if not isinstance(concepts, list) or not concepts:
-            logger.warning("Coverage analysis returned empty concepts")
-            return None
-
-        covered = [c["text"] for c in concepts if c.get("status") == "covered"]
-        missing = [c["text"] for c in concepts if c.get("status") == "missing"]
-        all_texts = [c["text"] for c in concepts]
-
-        result: dict = {
-            "concepts": all_texts,
-            "covered": covered,
-            "missing": missing,
-            "coverage_ratio": len(covered) / len(all_texts) if all_texts else 1.0,
-        }
-
-        # Classify missing concepts as retrieval or generation failures
-        if contexts is not None and missing:
-            retrieval_failures = []
-            generation_failures = []
-            for concept in missing:
-                if _check_concept_in_contexts(concept, contexts):
-                    generation_failures.append(concept)
-                else:
-                    retrieval_failures.append(concept)
-            result["retrieval_failures"] = retrieval_failures
-            result["generation_failures"] = generation_failures
-
+    logger.info(
+        "Coverage analysis: %d/%d concepts covered (%.0f%%), missing: %s",
+        len(covered),
+        len(concepts),
+        result["coverage_ratio"] * 100,
+        missing[:5] if missing else "none",
+    )
+    if contexts is not None and missing:
         logger.info(
-            "Coverage analysis: %d/%d concepts covered (%.0f%%), missing: %s",
-            len(covered),
-            len(all_texts),
-            result["coverage_ratio"] * 100,
-            missing[:5] if missing else "none",
+            "Failure classification: %d retrieval, %d generation",
+            len(result.get("retrieval_failures", [])),
+            len(result.get("generation_failures", [])),
         )
-        if contexts is not None and missing:
-            logger.info(
-                "Failure classification: %d retrieval, %d generation",
-                len(result.get("retrieval_failures", [])),
-                len(result.get("generation_failures", [])),
-            )
 
-        return result
-
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse coverage analysis response as JSON")
-        return None
-    except Exception as e:
-        logger.warning("Coverage analysis failed (%s), skipping", e)
-        return None
+    return result

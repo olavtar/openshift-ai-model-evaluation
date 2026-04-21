@@ -76,6 +76,24 @@ class _QuestionResult:
 # while still providing significant speedup over sequential processing.
 _MAX_CONCURRENT_QUESTIONS = 3
 
+# Keys accepted by retrieve_chunks(); profile-only merge options must be excluded.
+_RETRIEVE_CHUNKS_KWARGS = frozenset(
+    {
+        "top_k",
+        "max_per_doc",
+        "rerank_depth",
+        "diversity_min",
+        "keyword_enabled",
+        "dedup_threshold",
+        "diversity_relevance_threshold",
+    }
+)
+
+
+def _retrieve_chunks_kwargs(retrieval_kwargs: dict) -> dict:
+    """Strip evaluation-only keys before calling retrieve_chunks."""
+    return {k: v for k, v in retrieval_kwargs.items() if k in _RETRIEVE_CHUNKS_KWARGS}
+
 
 async def _process_question(
     q_item: EvalQuestion,
@@ -124,6 +142,8 @@ async def _process_question(
                     "keyword_enabled": r.keyword_search_enabled,
                     "dedup_threshold": r.dedup_threshold,
                     "diversity_relevance_threshold": r.diversity_relevance_threshold,
+                    "ensure_sub_query_representation": r.ensure_sub_query_representation,
+                    "sub_query_swap_score_multiplier": r.sub_query_swap_score_multiplier,
                 }
 
             # Decompose broad questions into targeted sub-queries for
@@ -134,26 +154,37 @@ async def _process_question(
                 if len(sub_queries) <= 1:
                     # Single query (original or decomposition failed)
                     chunks = await retrieve_chunks(
-                        query=question, session=retrieval_session, **retrieval_kwargs
+                        query=question,
+                        session=retrieval_session,
+                        **_retrieve_chunks_kwargs(retrieval_kwargs),
                     )
                 else:
-                    # Run retrieval for each sub-query and merge
+                    # Run retrieval for original question + each sub-query and merge.
+                    # Including the original ensures broad matches aren't lost when
+                    # decomposition produces narrower sub-queries.
+                    all_queries = [question] + sub_queries
                     logger.info(
-                        "Query decomposed into %d sub-queries: %s",
+                        "Query decomposed into %d sub-queries (+ original): %s",
                         len(sub_queries),
                         sub_queries,
                     )
                     all_chunks: list[dict] = []
                     seen_ids: set[int] = set()
-                    for sq in sub_queries:
+                    # Track which sub-query produced each chunk for concept diversity
+                    chunk_sub_queries: dict[int, int] = {}
+                    for sq_idx, sq in enumerate(all_queries):
                         sq_chunks = await retrieve_chunks(
-                            query=sq, session=retrieval_session, **retrieval_kwargs
+                            query=sq,
+                            session=retrieval_session,
+                            **_retrieve_chunks_kwargs(retrieval_kwargs),
                         )
                         new_count = 0
                         for chunk in sq_chunks:
-                            if chunk["id"] not in seen_ids:
+                            cid = chunk["id"]
+                            if cid not in seen_ids:
                                 all_chunks.append(chunk)
-                                seen_ids.add(chunk["id"])
+                                seen_ids.add(cid)
+                                chunk_sub_queries[cid] = sq_idx
                                 new_count += 1
                         logger.info(
                             "Sub-query '%s': %d chunks retrieved, %d new (not seen before)",
@@ -183,6 +214,54 @@ async def _process_question(
                         diversity_min=diversity_min,
                         relevance_threshold=threshold,
                     )
+
+                    # Sub-query representation: ensure each sub-query contributes
+                    # at least one chunk when enabled on the profile.
+                    if retrieval_kwargs.get("ensure_sub_query_representation", True):
+                        swap_mult = retrieval_kwargs.get(
+                            "sub_query_swap_score_multiplier", 1.1
+                        )
+                        min_swap_score = threshold * swap_mult
+                        represented_sqs = {
+                            chunk_sub_queries[c["id"]]
+                            for c in chunks
+                            if c["id"] in chunk_sub_queries
+                        }
+                        missing_sqs = set(range(len(all_queries))) - represented_sqs
+                        if missing_sqs:
+                            chunk_ids = {c["id"] for c in chunks}
+                            swapped = 0
+                            for sq_idx in missing_sqs:
+                                best = None
+                                for c in all_chunks:
+                                    if chunk_sub_queries.get(c["id"]) == sq_idx:
+                                        best = c
+                                        break  # all_chunks is score-sorted
+                                if (
+                                    not best
+                                    or best["id"] in chunk_ids
+                                    or best.get("score", 0.0) < min_swap_score
+                                ):
+                                    continue
+                                if len(chunks) >= top_k:
+                                    worst_idx = min(
+                                        range(len(chunks)),
+                                        key=lambda i: chunks[i].get("score", 0.0),
+                                    )
+                                    worst_score = chunks[worst_idx].get("score", 0.0)
+                                    if best.get("score", 0.0) <= worst_score:
+                                        continue
+                                    chunks[worst_idx] = best
+                                else:
+                                    chunks.append(best)
+                                chunk_ids.add(best["id"])
+                                swapped += 1
+                            if swapped:
+                                logger.info(
+                                    "Sub-query representation: swapped in %d chunks "
+                                    "for under-represented sub-queries",
+                                    swapped,
+                                )
 
                     # Log final document distribution
                     doc_counts: dict[str, int] = {}
@@ -254,6 +333,7 @@ async def _process_question(
                     expected_answer=expected_answer,
                     actual_answer=gen_result["answer"],
                     contexts=context_texts or None,
+                    question=question,
                 )
 
             # Compute per-question verdict if profile is loaded

@@ -10,6 +10,15 @@ export const EvalRunCreateResponseSchema = z.object({
     message: z.string(),
 });
 
+export const CoverageGapsSchema = z.object({
+    concepts: z.array(z.string()),
+    covered: z.array(z.string()),
+    missing: z.array(z.string()),
+    coverage_ratio: z.number(),
+    retrieval_failures: z.array(z.string()).optional(),
+    generation_failures: z.array(z.string()).optional(),
+});
+
 export const EvalResultSchema = z.object({
     id: z.number(),
     question: z.string(),
@@ -26,6 +35,8 @@ export const EvalResultSchema = z.object({
     compliance_accuracy_score: z.number().nullable().optional(),
     abstention_score: z.number().nullable().optional(),
     is_hallucination: z.boolean().nullable().optional(),
+    chunk_alignment_score: z.number().nullable().optional(),
+    coverage_gaps: CoverageGapsSchema.nullable().optional(),
     verdict: z.string().nullable().optional(),
     fail_reasons: z.array(z.string()).nullable().optional(),
     total_tokens: z.number().nullable().optional(),
@@ -113,6 +124,7 @@ export const SynthesizeResponseSchema = z.object({
 });
 
 export type EvalRunCreateResponse = z.infer<typeof EvalRunCreateResponseSchema>;
+export type CoverageGaps = z.infer<typeof CoverageGapsSchema>;
 export type EvalResult = z.infer<typeof EvalResultSchema>;
 export type EvalRun = z.infer<typeof EvalRunSchema>;
 export type EvalRunDetail = z.infer<typeof EvalRunDetailSchema>;
