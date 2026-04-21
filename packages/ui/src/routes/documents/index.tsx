@@ -13,6 +13,7 @@ import {
 import { FileText, Upload, Trash2, Loader2, AlertCircle, Link, RotateCcw } from 'lucide-react';
 import type { DocumentResponse } from '../../schemas/documents';
 import { DOC_STATUS_COLORS } from '../../lib/status-colors';
+import { formatUtcDate } from '../../lib/format';
 
 export const Route = createFileRoute('/documents/')({
     component: DocumentsPage,
@@ -86,7 +87,7 @@ function DocumentRow({
                         {' -- '}
                         {formatFileSize(doc.file_size_bytes)}
                         {doc.created_at &&
-                            ` -- ${new Date(doc.created_at).toLocaleDateString()}`}
+                            ` -- ${formatUtcDate(doc.created_at, 'date')}`}
                     </span>
                     {doc.error_message && (
                         <span className="flex items-center gap-1 text-xs text-destructive">

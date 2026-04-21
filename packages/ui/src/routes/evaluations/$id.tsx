@@ -13,7 +13,7 @@ import {
     Clock,
 } from 'lucide-react';
 import type { EvalResult } from '../../schemas/evaluation';
-import { formatScore, formatLatency } from '../../lib/format';
+import { formatScore, formatLatency, formatUtcDate } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
 
 export const Route = createFileRoute('/evaluations/$id')({
@@ -299,7 +299,7 @@ function EvalRunDetailPage() {
                             Run #{run.id} - {run.model_name}
                         </h1>
                         <p className="text-sm text-muted-foreground">
-                            {run.created_at && new Date(run.created_at).toLocaleString()}
+                            {run.created_at && formatUtcDate(run.created_at)}
                         </p>
                     </div>
                     <div className="flex items-center gap-2">

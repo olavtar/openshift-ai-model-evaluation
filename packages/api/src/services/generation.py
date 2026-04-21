@@ -2,6 +2,7 @@
 """Generation service -- calls the LLM via the MaaS /v1/chat/completions endpoint."""
 
 import logging
+import re
 
 import httpx
 
@@ -43,15 +44,18 @@ SYSTEM_PROMPT = (
     "You are a helpful assistant that answers questions based on the provided context. "
     "Use only the information from the context to answer. If the context does not contain "
     "enough information to answer the question, say so clearly.\n\n"
-    "SYNTHESIS REQUIREMENTS:\n"
-    "- Organize your answer by topic, not by source document. Group related information "
-    "from different sources under the same topic heading.\n"
-    "- Synthesize across all RELEVANT documents in the context. Do not include documents "
-    "that do not contribute meaningful information.\n"
-    "- For each major point, cite the source document name and page number when available.\n"
-    "- Cover as many distinct topics as the context supports rather than focusing deeply "
-    "on just one area.\n"
-    "- Do not fabricate connections between documents that are not supported by the context."
+    "RESPONSE RULE:\n"
+    "Answer using the provided context and ONLY the provided context.\n"
+    "- Synthesize a comprehensive overview that covers the main themes and topics "
+    "from the context. Do not merely enumerate individual line items from documents.\n"
+    "- Do NOT add any information, citations, item numbers, rule numbers, section "
+    "references, or form names from your own knowledge.\n"
+    "- If a specific reference does not appear in the context text, do not include it. "
+    "Describe the requirement in general terms instead.\n"
+    "- Organize by topic, not by source document.\n"
+    "- Cite the source document name and page number when they appear in the context.\n"
+    "- Summarize key points rather than copying long passages verbatim.\n"
+    "- If the context does not contain enough information, say so clearly."
 )
 
 
@@ -109,8 +113,8 @@ async def generate_answer(
             {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": user_message},
         ],
-        "temperature": 0.1,
-        "max_tokens": 1024,
+        "temperature": 0.0,
+        "max_tokens": 2048,
     }
 
     try:
@@ -120,6 +124,8 @@ async def generate_answer(
 
         data = response.json()
         answer = data["choices"][0]["message"]["content"]
+        # Strip <think>...</think> reasoning blocks that some models emit
+        answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
         usage = data.get("usage")
 
         return {

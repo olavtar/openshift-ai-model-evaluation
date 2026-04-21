@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import type { EvalQuestionInput } from '../../services/evaluation';
-import { formatScore, formatLatency } from '../../lib/format';
+import { formatScore, formatLatency, formatUtcDate } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
 
 export const Route = createFileRoute('/evaluations/')({
@@ -85,7 +85,7 @@ function RunRow({
                         {' -- '}
                         {run.completed_questions}/{run.total_questions} questions
                         {run.created_at &&
-                            ` -- ${new Date(run.created_at).toLocaleDateString()}`}
+                            ` -- ${formatUtcDate(run.created_at, 'date')}`}
                     </span>
                 </div>
                 <div className="flex items-center gap-6 text-sm">
