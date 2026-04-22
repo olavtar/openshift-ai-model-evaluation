@@ -162,7 +162,6 @@ function NewEvalForm({
     const [selectedModel, setSelectedModel] = useState('');
     const [selectedProfile, setSelectedProfile] = useState('');
     const [questions, setQuestions] = useState<EvalQuestionInput[]>(initialQuestions ?? []);
-    const [newQuestion, setNewQuestion] = useState('');
     const [warningMessage, setWarningMessage] = useState('');
     const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
     const [saveSetName, setSaveSetName] = useState('');
@@ -175,11 +174,7 @@ function NewEvalForm({
     }, [profiles, selectedProfile]);
 
     const addQuestion = () => {
-        const trimmed = newQuestion.trim();
-        if (trimmed && !questions.some((q) => q.question === trimmed)) {
-            setQuestions([...questions, { question: trimmed }]);
-            setNewQuestion('');
-        }
+        setQuestions([...questions, { question: '', expected_answer: '' }]);
     };
 
     const removeQuestion = (index: number) => {
@@ -205,9 +200,10 @@ function NewEvalForm({
     };
 
     const handleSubmit = () => {
-        if (!selectedModel || questions.length === 0) return;
+        const validQuestions = questions.filter((q) => q.question.trim());
+        if (!selectedModel || validQuestions.length === 0) return;
         createMutation.mutate(
-            { modelName: selectedModel, questions, questionSetId: loadedSetId, profileId: selectedProfile || undefined },
+            { modelName: selectedModel, questions: validQuestions, questionSetId: loadedSetId, profileId: selectedProfile || undefined },
             {
                 onSuccess: (data) => {
                     if (data.message.includes('Warning')) {
@@ -221,57 +217,69 @@ function NewEvalForm({
         );
     };
 
+    const validQuestionCount = questions.filter((q) => q.question.trim()).length;
+
     return (
         <div className="rounded-xl border bg-card p-6">
-            <h3 className="mb-4 text-lg font-semibold">Run New Evaluation</h3>
+            <h3 className="mb-6 text-lg font-semibold">Run New Evaluation</h3>
 
-            <div className="mb-4">
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                    Model
-                </label>
-                <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
-                >
-                    <option value="">Select a model</option>
-                    {models?.map((m) => (
-                        <option key={m.id} value={m.name}>
-                            {m.name} ({m.deployment_mode})
-                        </option>
-                    ))}
-                </select>
-            </div>
+            {/* Step 1 -- Setup */}
+            <div className="mb-6">
+                <h4 className="mb-4 text-sm font-medium text-muted-foreground">
+                    Step 1 -- Setup
+                </h4>
 
-            {profiles && profiles.length > 0 && (
                 <div className="mb-4">
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                        Evaluation Profile
+                        Model
                     </label>
                     <select
-                        value={selectedProfile}
-                        onChange={(e) => setSelectedProfile(e.target.value)}
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
                         className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
                     >
-                        <option value="">No profile (raw metric comparison)</option>
-                        {profiles.map((p) => (
-                            <option key={p.id} value={p.id}>
-                                {p.id} -- {p.description || p.domain}
+                        <option value="">Select a model</option>
+                        {models?.map((m) => (
+                            <option key={m.id} value={m.name}>
+                                {m.name} ({m.deployment_mode})
                             </option>
                         ))}
                     </select>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Profiles define pass/fail thresholds and disqualification gates for comparison verdicts.
-                    </p>
                 </div>
-            )}
 
-            <div className="mb-4">
-                <div className="mb-1.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium text-muted-foreground">
-                            Questions ({questions.length})
+                {profiles && profiles.length > 0 && (
+                    <div>
+                        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            Evaluation Profile
                         </label>
+                        <select
+                            value={selectedProfile}
+                            onChange={(e) => setSelectedProfile(e.target.value)}
+                            className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                        >
+                            <option value="">No profile (raw metric comparison)</option>
+                            {profiles.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                    {p.id} -- {p.description || p.domain}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            Profiles define pass/fail thresholds and disqualification gates for comparison verdicts.
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            <hr className="mb-6 border-border" />
+
+            {/* Step 2 -- Questions */}
+            <div className="mb-6">
+                <div className="mb-4 flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-muted-foreground">
+                        Step 2 -- Questions ({validQuestionCount})
+                    </h4>
+                    <div className="flex items-center gap-2">
                         {loadedSetId && (
                             <button
                                 onClick={() => {
@@ -291,8 +299,6 @@ function NewEvalForm({
                                 Delete set
                             </button>
                         )}
-                    </div>
-                    <div className="flex items-center gap-2">
                         {questionSets && questionSets.length > 0 && (
                             <select
                                 onChange={(e) => {
@@ -312,7 +318,7 @@ function NewEvalForm({
                                 defaultValue=""
                             >
                                 <option value="" disabled>
-                                    Load question set...
+                                    Load Question Set
                                 </option>
                                 {questionSets.map((s) => (
                                     <option key={s.id} value={s.id}>
@@ -323,111 +329,81 @@ function NewEvalForm({
                         )}
                     </div>
                 </div>
-                <div className="space-y-2">
+
+                <div className="space-y-4">
                     {questions.map((q, i) => (
-                        <div
-                            key={i}
-                            className="rounded-lg border bg-background px-3 py-2 text-sm"
-                        >
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="text"
-                                    value={q.question}
-                                    onChange={(e) => {
-                                        const updated = [...questions];
-                                        updated[i] = { ...updated[i], question: e.target.value };
-                                        setQuestions(updated);
-                                    }}
-                                    className="flex-1 bg-transparent outline-none"
-                                    placeholder="Question"
-                                />
-                                <button
-                                    onClick={() => {
-                                        const updated = [...questions];
-                                        updated[i] = {
-                                            ...updated[i],
-                                            expected_answer: updated[i].expected_answer === undefined ? '' : undefined,
-                                        };
-                                        setQuestions(updated);
-                                    }}
-                                    className={`shrink-0 rounded px-1.5 py-0.5 text-xs transition-colors ${
-                                        q.expected_answer !== undefined
-                                            ? 'bg-primary/10 text-primary'
-                                            : 'text-muted-foreground hover:bg-accent'
-                                    }`}
-                                    title="Toggle expected answer"
-                                >
-                                    Expected answer
-                                </button>
+                        <div key={i} className="rounded-lg border bg-background p-4">
+                            <div className="mb-2 flex items-center justify-between">
+                                <span className="text-xs font-medium text-muted-foreground">
+                                    Question {i + 1}
+                                </span>
                                 <button
                                     onClick={() => removeQuestion(i)}
-                                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                                    className="shrink-0 text-muted-foreground transition-colors hover:text-destructive"
+                                    title="Remove question"
                                 >
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </button>
                             </div>
-                            {q.expected_answer !== undefined && (
-                                <textarea
-                                    value={q.expected_answer ?? ''}
-                                    onChange={(e) => {
-                                        const updated = [...questions];
-                                        updated[i] = { ...updated[i], expected_answer: e.target.value || null };
-                                        setQuestions(updated);
-                                    }}
-                                    placeholder="Expected answer (enables completeness and correctness scoring)"
-                                    className="mt-1.5 w-full resize-none rounded border bg-background px-2 py-1.5 text-xs text-muted-foreground outline-none focus:border-primary/50"
-                                    rows={2}
-                                />
-                            )}
+                            <input
+                                type="text"
+                                value={q.question}
+                                onChange={(e) => {
+                                    const updated = [...questions];
+                                    updated[i] = { ...updated[i], question: e.target.value };
+                                    setQuestions(updated);
+                                }}
+                                className="mb-3 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
+                                placeholder="Enter your question"
+                            />
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-medium text-muted-foreground">
+                                    Expected Answer{' '}
+                                    <span className="font-normal">(optional)</span>
+                                </label>
+                                {q.expected_answer !== undefined && q.expected_answer !== '' && (
+                                    <button
+                                        onClick={() => {
+                                            const updated = [...questions];
+                                            updated[i] = { ...updated[i], expected_answer: '' };
+                                            setQuestions(updated);
+                                        }}
+                                        className="text-xs text-muted-foreground transition-colors hover:text-destructive"
+                                    >
+                                        Remove
+                                    </button>
+                                )}
+                            </div>
+                            <textarea
+                                value={q.expected_answer ?? ''}
+                                onChange={(e) => {
+                                    const updated = [...questions];
+                                    updated[i] = { ...updated[i], expected_answer: e.target.value || null };
+                                    setQuestions(updated);
+                                }}
+                                placeholder="Used to evaluate correctness and completeness"
+                                className="mt-1.5 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus:border-primary/50"
+                                rows={2}
+                            />
                         </div>
                     ))}
                 </div>
 
-                <div className="mt-2 flex gap-2">
-                    <input
-                        type="text"
-                        value={newQuestion}
-                        onChange={(e) => setNewQuestion(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && addQuestion()}
-                        placeholder="Type a question and press Enter"
-                        className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm"
-                    />
-                    <button
-                        onClick={addQuestion}
-                        disabled={!newQuestion.trim()}
-                        className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent disabled:opacity-50"
-                    >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add
-                    </button>
-                </div>
+                <button
+                    onClick={addQuestion}
+                    className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add Question
+                </button>
+            </div>
 
-                <div className="mt-2 flex gap-2">
-                    <button
-                        onClick={handleSynthesize}
-                        disabled={synthesizeMutation.isPending}
-                        className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent disabled:opacity-50"
-                    >
-                        {synthesizeMutation.isPending ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                            <Sparkles className="h-3.5 w-3.5" />
-                        )}
-                        Generate from documents
-                    </button>
-                    {questions.length > 0 && !showSaveSet && (
-                        <button
-                            onClick={() => setShowSaveSet(true)}
-                            className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
-                        >
-                            <Save className="h-3.5 w-3.5" />
-                            Save as question set
-                        </button>
-                    )}
-                </div>
+            <hr className="mb-6 border-border" />
 
+            {/* Step 3 -- Actions */}
+            <div>
                 {showSaveSet && (
-                    <div className="mt-2 flex gap-2">
+                    <div className="mb-4 flex gap-2">
                         <input
                             type="text"
                             value={saveSetName}
@@ -485,39 +461,96 @@ function NewEvalForm({
                         </button>
                     </div>
                 )}
-            </div>
 
-            <div className="flex gap-2">
-                <button
-                    onClick={handleSubmit}
-                    disabled={!selectedModel || questions.length === 0 || createMutation.isPending}
-                    className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                >
-                    {createMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                        <BarChart3 className="h-4 w-4" />
-                    )}
-                    Run Evaluation
-                </button>
-                <button
-                    onClick={onCancel}
-                    className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
-                >
-                    Cancel
-                </button>
+                <div className="grid grid-cols-3 divide-x divide-border rounded-lg border bg-muted/30">
+                    {/* Column 1: Step 3 -- Actions */}
+                    <div className="p-4">
+                        <h4 className="mb-3 text-sm font-medium">
+                            Step 3 &mdash; Actions
+                        </h4>
+                        <button
+                            onClick={handleSynthesize}
+                            disabled={synthesizeMutation.isPending}
+                            className="flex flex-col items-start gap-0.5 rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
+                        >
+                            <span className="flex items-center gap-1.5 text-sm font-medium">
+                                {synthesizeMutation.isPending ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Sparkles className="h-3.5 w-3.5" />
+                                )}
+                                Generate Questions
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                                Generate from documents
+                            </span>
+                        </button>
+                    </div>
+
+                    {/* Column 2: Manage Dataset */}
+                    <div className="p-4">
+                        <h4 className="mb-3 text-sm font-medium">
+                            Manage Dataset
+                        </h4>
+                        {questions.length > 0 && !showSaveSet ? (
+                            <button
+                                onClick={() => setShowSaveSet(true)}
+                                className="flex flex-col items-start gap-0.5 rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent"
+                            >
+                                <span className="flex items-center gap-1.5 text-sm font-medium">
+                                    <Save className="h-3.5 w-3.5" />
+                                    Save as question set
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                    Save it to reuse later
+                                </span>
+                            </button>
+                        ) : (
+                            <p className="px-1 text-xs text-muted-foreground">
+                                Add questions to save as a set
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Column 3: Run */}
+                    <div className="p-4">
+                        <h4 className="mb-3 text-sm font-medium">
+                            Run
+                        </h4>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleSubmit}
+                                disabled={!selectedModel || validQuestionCount === 0 || createMutation.isPending}
+                                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                {createMutation.isPending ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <BarChart3 className="h-4 w-4" />
+                                )}
+                                Run Evaluation
+                            </button>
+                            <button
+                                onClick={onCancel}
+                                className="rounded-lg border bg-background px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {synthesizeMutation.error && (
-                <p className="mt-2 text-sm text-destructive">{synthesizeMutation.error.message}</p>
+                <p className="mt-4 text-sm text-destructive">{synthesizeMutation.error.message}</p>
             )}
 
             {createMutation.error && (
-                <p className="mt-2 text-sm text-destructive">{createMutation.error.message}</p>
+                <p className="mt-4 text-sm text-destructive">{createMutation.error.message}</p>
             )}
 
             {warningMessage && (
-                <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/20">
                     <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
                     <p className="text-xs text-amber-700 dark:text-amber-300">{warningMessage}</p>
                 </div>

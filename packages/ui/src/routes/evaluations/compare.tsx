@@ -494,32 +494,6 @@ function ExecutiveVerdictCard({ data }: { data: ComparisonResponse }) {
                 </div>
             )}
 
-            {/* Disqualifications */}
-            {hasDisqualifications && (
-                <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50/50 p-3 dark:border-rose-900 dark:bg-rose-950/10">
-                    <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-rose-800 dark:text-rose-300">
-                        Disqualified from winning
-                    </h3>
-                    {Object.entries(decision.disqualified)
-                        .filter(([, reasons]) => reasons.length > 0)
-                        .map(([runKey, reasons]) => {
-                            const modelName =
-                                runKey === 'run_a'
-                                    ? data.run_a.model_name
-                                    : data.run_b.model_name;
-                            return (
-                                <div key={runKey} className="mb-1">
-                                    <span className="text-sm font-medium text-rose-900 dark:text-rose-200">
-                                        {modelName}:
-                                    </span>
-                                    <span className="ml-1 text-sm text-rose-800 dark:text-rose-300">
-                                        {reasons.join(', ')}
-                                    </span>
-                                </div>
-                            );
-                        })}
-                </div>
-            )}
 
             {/* Comparison warnings */}
             {data.warnings && data.warnings.length > 0 && (
