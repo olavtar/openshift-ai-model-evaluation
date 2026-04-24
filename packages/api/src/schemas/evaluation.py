@@ -49,6 +49,7 @@ class EvalResultResponse(BaseModel):
     is_hallucination: bool | None = None
     chunk_alignment_score: float | None = None
     coverage_gaps: dict | None = None
+    deterministic_checks: list[dict] | None = None
     verdict: str | None = None
     fail_reasons: list[str] | None = None
     total_tokens: int | None = None
