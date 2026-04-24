@@ -166,6 +166,53 @@ def build_truth_metadata(model_name: str, source_chunk_ids: list[int]) -> TruthM
     )
 
 
+def _align_chunks_to_answer(
+    expected_answer: str,
+    source_chunks: list[dict],
+    min_overlap_words: int = 3,
+) -> list[dict]:
+    """Find which source chunks are actually referenced by the expected answer.
+
+    Uses word n-gram overlap to identify chunks whose content appears in the
+    answer. This avoids making every synthesized question depend on all
+    synthesis chunks, which would make deterministic checks too strict.
+
+    Args:
+        expected_answer: The expected answer text.
+        source_chunks: All chunks from the synthesis context.
+        min_overlap_words: Minimum word n-gram length for a match.
+
+    Returns:
+        Subset of source_chunks that have content overlap with the answer.
+        Falls back to all chunks if no overlap is found (conservative).
+    """
+    if not expected_answer or not source_chunks:
+        return source_chunks
+
+    answer_lower = expected_answer.lower()
+    answer_words = answer_lower.split()
+    if len(answer_words) < min_overlap_words:
+        return source_chunks
+
+    # Build answer n-grams for matching
+    answer_ngrams: set[str] = set()
+    for i in range(len(answer_words) - min_overlap_words + 1):
+        answer_ngrams.add(" ".join(answer_words[i : i + min_overlap_words]))
+
+    aligned = []
+    for chunk in source_chunks:
+        chunk_text = (chunk.get("text") or "").lower()
+        chunk_words = chunk_text.split()
+        for i in range(len(chunk_words) - min_overlap_words + 1):
+            ngram = " ".join(chunk_words[i : i + min_overlap_words])
+            if ngram in answer_ngrams:
+                aligned.append(chunk)
+                break
+
+    # Fall back to all chunks if alignment finds nothing (conservative)
+    return aligned if aligned else source_chunks
+
+
 async def generate_truth_from_synthesis(
     expected_answer: str,
     source_chunks: list[dict],
@@ -173,18 +220,23 @@ async def generate_truth_from_synthesis(
 ) -> TruthPayload:
     """Generate a complete truth payload for a synthesized question.
 
+    Aligns source chunks to the expected answer so that each question's
+    truth only references the chunks that actually contributed to its
+    answer, rather than all synthesis chunks.
+
     Args:
         expected_answer: LLM-generated expected answer.
-        source_chunks: Chunks used during synthesis, each with 'id' and
-            'source_document' keys.
+        source_chunks: Chunks used during synthesis, each with 'id',
+            'text', and 'source_document' keys.
         model_name: Judge model for concept extraction.
 
     Returns:
         Complete TruthPayload with traced retrieval truth.
     """
     answer_truth = await extract_answer_truth(expected_answer, model_name)
-    retrieval_truth = build_retrieval_truth_from_synthesis(source_chunks)
-    source_chunk_ids = [c["id"] for c in source_chunks if c.get("id")]
+    aligned_chunks = _align_chunks_to_answer(expected_answer, source_chunks)
+    retrieval_truth = build_retrieval_truth_from_synthesis(aligned_chunks)
+    source_chunk_ids = [c["id"] for c in aligned_chunks if c.get("id")]
     metadata = build_truth_metadata(model_name, source_chunk_ids)
 
     return TruthPayload(
