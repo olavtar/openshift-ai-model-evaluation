@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from .truth import TruthPayload
+
 
 class QuestionSetItem(BaseModel):
     """A single question with optional expected answer."""
@@ -14,6 +16,7 @@ class QuestionSetItem(BaseModel):
     expected_chunks: list[str] | None = Field(
         default=None, description='Expected source chunks, e.g. ["report.pdf:3", "guide.pdf"].'
     )
+    truth: TruthPayload | None = None
 
 
 class QuestionSetCreate(BaseModel):

@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .truth import TruthPayload
+
 
 class EvalQuestion(BaseModel):
     """A single evaluation question with optional expected answer."""
@@ -15,6 +17,7 @@ class EvalQuestion(BaseModel):
     expected_chunks: list[str] | None = Field(
         default=None, description='Expected source chunks, e.g. ["report.pdf:3", "guide.pdf"].'
     )
+    truth: TruthPayload | None = None
 
 
 class EvalRunCreate(BaseModel):
@@ -172,6 +175,7 @@ class SynthesizedQuestion(BaseModel):
 
     question: str
     expected_answer: str | None = None
+    truth: TruthPayload | None = None
 
 
 class SynthesizeResponse(BaseModel):

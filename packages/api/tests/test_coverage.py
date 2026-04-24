@@ -325,3 +325,67 @@ def test_no_failure_classification_without_contexts():
     assert result is not None
     assert "retrieval_failures" not in result
     assert "generation_failures" not in result
+
+
+# --- Pre-extracted concepts tests ---
+
+
+def test_pre_extracted_concepts_skips_llm_extraction():
+    """Should skip LLM extraction and use pre-extracted concepts directly."""
+    _setup_settings()
+
+    pre_concepts = ["concept from truth A", "concept from truth B"]
+
+    # Only one LLM call (coverage check), not two (no extraction)
+    check_resp = _make_mock_response('["covered", "missing"]')
+    mock_client = AsyncMock()
+    mock_client.post.return_value = check_resp
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client):
+        result = asyncio.run(
+            detect_coverage_gaps(
+                "expected answer text",
+                "actual answer text",
+                pre_extracted_concepts=pre_concepts,
+            )
+        )
+
+    assert result is not None
+    assert result["concepts"] == pre_concepts
+    assert result["covered"] == ["concept from truth A"]
+    assert result["missing"] == ["concept from truth B"]
+    assert result["coverage_ratio"] == 0.5
+    # Only 1 LLM call (check), not 2 (extract + check)
+    assert mock_client.post.call_count == 1
+
+
+def test_pre_extracted_concepts_with_failure_classification():
+    """Should classify failures correctly when using pre-extracted concepts."""
+    _setup_settings()
+
+    pre_concepts = ["quarterly filing deadline", "blockchain custody requirements"]
+    contexts = ["Form N-PORT requires quarterly filing of portfolio holdings within 60 days."]
+
+    check_resp = _make_mock_response('["missing", "missing"]')
+    mock_client = AsyncMock()
+    mock_client.post.return_value = check_resp
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.services.coverage.httpx.AsyncClient", return_value=mock_client):
+        result = asyncio.run(
+            detect_coverage_gaps(
+                "expected",
+                "actual",
+                contexts=contexts,
+                pre_extracted_concepts=pre_concepts,
+            )
+        )
+
+    assert result is not None
+    # "quarterly filing deadline" words appear in context -> generation failure
+    assert "quarterly filing deadline" in result["generation_failures"]
+    # "blockchain custody requirements" words absent from context -> retrieval failure
+    assert "blockchain custody requirements" in result["retrieval_failures"]

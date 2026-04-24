@@ -320,6 +320,42 @@ def test_chunk_alignment_mixed_format():
     assert compute_chunk_alignment(retrieved, expected) == 1.0
 
 
+def test_chunk_alignment_chunk_id_format():
+    """Should match chunk:{id} refs against retrieved chunk IDs."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"id": 42, "source_document": "guide.pdf", "page_number": "3"},
+        {"id": 43, "source_document": "guide.pdf", "page_number": "4"},
+        {"id": 67, "source_document": "report.pdf", "page_number": "1"},
+    ]
+    expected = ["chunk:42", "chunk:67"]
+    assert compute_chunk_alignment(retrieved, expected) == 1.0
+
+
+def test_chunk_alignment_chunk_id_partial():
+    """Should return fraction when some chunk:{id} refs are not retrieved."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"id": 42, "source_document": "guide.pdf", "page_number": "3"},
+    ]
+    expected = ["chunk:42", "chunk:99"]
+    assert compute_chunk_alignment(retrieved, expected) == 0.5
+
+
+def test_chunk_alignment_mixed_chunk_id_and_legacy():
+    """Should handle mix of chunk:{id} and legacy filename refs."""
+    from src.services.scoring import compute_chunk_alignment
+
+    retrieved = [
+        {"id": 42, "source_document": "guide.pdf", "page_number": "3"},
+        {"id": 43, "source_document": "report.pdf", "page_number": "1"},
+    ]
+    expected = ["chunk:42", "report.pdf:1"]
+    assert compute_chunk_alignment(retrieved, expected) == 1.0
+
+
 def test_resolved_judge_model_name_order():
     """Judge model should prefer JUDGE_MODEL_NAME, then MODEL_A_NAME, then MODEL_B_NAME."""
     from src.core.config import Settings
