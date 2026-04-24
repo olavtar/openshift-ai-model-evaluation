@@ -77,6 +77,11 @@ class EvalRunResponse(BaseModel):
     hallucination_rate: float | None = None
     avg_chunk_alignment: float | None = None
     profile_id: str | None = None
+    profile_version: str | None = None
+    judge_model_name: str | None = None
+    synthesis_model_name: str | None = None
+    retrieval_config: dict | None = None
+    corpus_snapshot: dict | None = None
     overall_verdict: str | None = None
     pass_count: int | None = None
     fail_count: int | None = None

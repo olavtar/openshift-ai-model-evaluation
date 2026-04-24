@@ -329,3 +329,175 @@ def test_create_eval_run_graceful_on_truth_failure(client, monkeypatch):
     assert response.status_code == 201
     data = response.json()
     assert data["total_questions"] == 1
+
+
+# --- Run metadata capture tests ---
+
+
+def test_eval_run_captures_judge_model(client, monkeypatch):
+    """Should store judge_model_name on the eval run at creation time."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    detail = client.get(f"/evaluations/{run_id}")
+    assert detail.status_code == 200
+    data = detail.json()
+    assert data["judge_model_name"] == "test-judge"
+
+
+def test_eval_run_captures_corpus_snapshot(client):
+    """Should store corpus_snapshot on the eval run at creation time."""
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    detail = client.get(f"/evaluations/{run_id}")
+    data = detail.json()
+    snapshot = data["corpus_snapshot"]
+    assert snapshot is not None
+    assert "documents" in snapshot
+    assert "total_documents" in snapshot
+    assert "total_chunks" in snapshot
+    assert isinstance(snapshot["documents"], list)
+
+
+def test_eval_run_captures_retrieval_config_with_profile(client):
+    """Should store retrieval_config when a profile is specified."""
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+                "profile_id": "fsi_compliance_v1",
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    detail = client.get(f"/evaluations/{run_id}")
+    data = detail.json()
+    assert data["retrieval_config"] is not None
+    assert "top_k" in data["retrieval_config"]
+    assert data["profile_version"] is not None
+
+
+def test_eval_run_no_retrieval_config_without_profile(client):
+    """Should have null retrieval_config when no profile is specified."""
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    detail = client.get(f"/evaluations/{run_id}")
+    data = detail.json()
+    assert data["retrieval_config"] is None
+
+
+# --- Comparison warning tests ---
+
+
+def test_compare_warns_on_judge_model_mismatch(client, monkeypatch):
+    """Should warn when runs used different judge models."""
+    with patch("src.routes.evaluation._run_evaluation"):
+        monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "judge-a", raising=False)
+        resp_a = client.post(
+            "/evaluations/",
+            json={"model_name": "model-a", "questions": ["Q?"]},
+        )
+        monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "judge-b", raising=False)
+        resp_b = client.post(
+            "/evaluations/",
+            json={"model_name": "model-b", "questions": ["Q?"]},
+        )
+
+    id_a = resp_a.json()["eval_run_id"]
+    id_b = resp_b.json()["eval_run_id"]
+
+    response = client.get(f"/evaluations/compare?run_a_id={id_a}&run_b_id={id_b}")
+    data = response.json()
+    warning_codes = [w["code"] for w in data["warnings"]]
+    assert "JUDGE_MODEL_MISMATCH" in warning_codes
+
+
+def test_compare_warns_on_corpus_change(client, _setup_db):
+    """Should warn when corpus snapshots differ between runs."""
+    from db import Document
+
+    engine, async_session = _setup_db
+
+    # Create run A with empty corpus
+    with patch("src.routes.evaluation._run_evaluation"):
+        resp_a = client.post(
+            "/evaluations/",
+            json={"model_name": "model-a", "questions": ["Q?"]},
+        )
+
+    # Add a document so the corpus changes
+    import asyncio
+
+    async def _add_doc():
+        async with async_session() as session:
+            session.add(Document(filename="new.pdf", status="ready", chunk_count=5))
+            await session.commit()
+
+    asyncio.run(_add_doc())
+
+    # Create run B with different corpus
+    with patch("src.routes.evaluation._run_evaluation"):
+        resp_b = client.post(
+            "/evaluations/",
+            json={"model_name": "model-b", "questions": ["Q?"]},
+        )
+
+    id_a = resp_a.json()["eval_run_id"]
+    id_b = resp_b.json()["eval_run_id"]
+
+    response = client.get(f"/evaluations/compare?run_a_id={id_a}&run_b_id={id_b}")
+    data = response.json()
+    warning_codes = [w["code"] for w in data["warnings"]]
+    assert "CORPUS_MISMATCH" in warning_codes
+
+
+def test_compare_no_warnings_when_same_conditions(client, monkeypatch):
+    """Should have no metadata warnings when runs share same conditions."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "same-judge", raising=False)
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        resp_a = client.post(
+            "/evaluations/",
+            json={"model_name": "model-a", "questions": ["Q?"]},
+        )
+        resp_b = client.post(
+            "/evaluations/",
+            json={"model_name": "model-b", "questions": ["Q?"]},
+        )
+
+    id_a = resp_a.json()["eval_run_id"]
+    id_b = resp_b.json()["eval_run_id"]
+
+    response = client.get(f"/evaluations/compare?run_a_id={id_a}&run_b_id={id_b}")
+    data = response.json()
+    warning_codes = [w["code"] for w in data["warnings"]]
+    # No metadata mismatch warnings expected
+    assert "JUDGE_MODEL_MISMATCH" not in warning_codes
+    assert "CORPUS_MISMATCH" not in warning_codes

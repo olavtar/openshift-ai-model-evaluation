@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from db import EvalResult, EvalRun, get_db
+from db import Document, EvalResult, EvalRun, get_db
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,6 +96,34 @@ _RETRIEVE_CHUNKS_KWARGS = frozenset(
 def _retrieve_chunks_kwargs(retrieval_kwargs: dict) -> dict:
     """Strip evaluation-only keys before calling retrieve_chunks."""
     return {k: v for k, v in retrieval_kwargs.items() if k in _RETRIEVE_CHUNKS_KWARGS}
+
+
+async def _build_corpus_snapshot(session: AsyncSession) -> dict:
+    """Build a lightweight corpus snapshot for reproducibility.
+
+    Returns a dict with document metadata and totals. Does not store
+    chunk text -- only IDs, filenames, and counts.
+    """
+    result = await session.execute(
+        select(Document)
+        .where(Document.status == "ready", Document.deleted_at.is_(None))
+        .order_by(Document.id)
+    )
+    docs = result.scalars().all()
+    total_chunks = sum(d.chunk_count for d in docs)
+    return {
+        "documents": [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "chunk_count": d.chunk_count,
+                "status": d.status,
+            }
+            for d in docs
+        ],
+        "total_documents": len(docs),
+        "total_chunks": total_chunks,
+    }
 
 
 async def _process_question(
@@ -592,10 +620,27 @@ async def create_eval_run(
                 except Exception as e:
                     logger.warning("Truth generation failed for inline question: %s", e)
 
+    # Snapshot run metadata for reproducibility (before background task starts)
+    retrieval_cfg = None
+    profile_version = None
+    if request.profile_id:
+        try:
+            prof = load_profile(request.profile_id)
+            retrieval_cfg = prof.retrieval.model_dump()
+            profile_version = prof.version
+        except (FileNotFoundError, ValueError):
+            pass
+
+    corpus_snapshot = await _build_corpus_snapshot(session)
+
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=request.question_set_id,
         profile_id=request.profile_id,
+        profile_version=profile_version,
+        judge_model_name=judge_model or None,
+        retrieval_config=retrieval_cfg,
+        corpus_snapshot=corpus_snapshot,
         status="pending",
         total_questions=len(normalized),
     )
@@ -785,6 +830,11 @@ def _build_run_response(run: EvalRun) -> EvalRunResponse:
         hallucination_rate=run.hallucination_rate,
         avg_chunk_alignment=run.avg_chunk_alignment,
         profile_id=run.profile_id,
+        profile_version=run.profile_version,
+        judge_model_name=run.judge_model_name,
+        synthesis_model_name=run.synthesis_model_name,
+        retrieval_config=run.retrieval_config,
+        corpus_snapshot=run.corpus_snapshot,
         overall_verdict=run.overall_verdict,
         pass_count=run.pass_count,
         fail_count=run.fail_count,
@@ -998,8 +1048,57 @@ async def compare_eval_runs(
                 message="Runs use different question sets",
             )
         )
-    # Judge model and corpus snapshot are not stored on the run yet;
-    # flag that they cannot be verified.
+    if (
+        run_a.profile_id
+        and run_b.profile_id
+        and run_a.profile_id == run_b.profile_id
+        and run_a.profile_version != run_b.profile_version
+    ):
+        warnings.append(
+            ComparisonWarning(
+                code="PROFILE_VERSION_MISMATCH",
+                message=(
+                    f"Same profile but different versions: "
+                    f"{run_a.profile_version or 'unknown'} vs "
+                    f"{run_b.profile_version or 'unknown'}"
+                ),
+            )
+        )
+    if run_a.judge_model_name and run_b.judge_model_name:
+        if run_a.judge_model_name != run_b.judge_model_name:
+            warnings.append(
+                ComparisonWarning(
+                    code="JUDGE_MODEL_MISMATCH",
+                    message=(
+                        f"Runs used different judge models: "
+                        f"{run_a.judge_model_name} vs {run_b.judge_model_name}"
+                    ),
+                )
+            )
+    elif not run_a.judge_model_name or not run_b.judge_model_name:
+        missing = "run A" if not run_a.judge_model_name else "run B"
+        warnings.append(
+            ComparisonWarning(
+                code="JUDGE_MODEL_UNKNOWN",
+                message=f"Judge model not recorded for {missing}; scoring conditions may differ",
+            )
+        )
+    if run_a.corpus_snapshot and run_b.corpus_snapshot:
+        if run_a.corpus_snapshot != run_b.corpus_snapshot:
+            warnings.append(
+                ComparisonWarning(
+                    code="CORPUS_MISMATCH",
+                    message="Corpus changed between runs; retrieval results may not be comparable",
+                )
+            )
+    elif not run_a.corpus_snapshot or not run_b.corpus_snapshot:
+        missing = "run A" if not run_a.corpus_snapshot else "run B"
+        warnings.append(
+            ComparisonWarning(
+                code="CORPUS_UNKNOWN",
+                message=f"Corpus snapshot not recorded for {missing}; cannot verify same corpus",
+            )
+        )
     if not run_a.profile_id and not run_b.profile_id:
         warnings.append(
             ComparisonWarning(
