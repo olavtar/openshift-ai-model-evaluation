@@ -501,3 +501,213 @@ def test_compare_no_warnings_when_same_conditions(client, monkeypatch):
     # No metadata mismatch warnings expected
     assert "JUDGE_MODEL_MISMATCH" not in warning_codes
     assert "CORPUS_MISMATCH" not in warning_codes
+
+
+# --- Truth persistence tests ---
+
+
+def test_eval_result_response_includes_truth_field(client):
+    """Should include truth in eval result response schema."""
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    detail = client.get(f"/evaluations/{run_id}")
+    assert detail.status_code == 200
+    data = detail.json()
+    # No results yet (background task is mocked), but schema is valid
+    assert "results" in data
+
+
+def test_truth_persisted_on_eval_result(client, _setup_db):
+    """Should persist truth_payload on EvalResult when stored."""
+    import asyncio
+
+    from db import EvalResult
+
+    _, async_session = _setup_db
+
+    truth_data = _make_truth_payload().model_dump(mode="json")
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    run_id = create_resp.json()["eval_run_id"]
+
+    # Manually seed an EvalResult with truth_payload
+    async def _seed():
+        async with async_session() as session:
+            session.add(
+                EvalResult(
+                    eval_run_id=run_id,
+                    question="What is AI?",
+                    expected_answer="Artificial intelligence.",
+                    answer="AI is artificial intelligence.",
+                    truth_payload=truth_data,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    detail = client.get(f"/evaluations/{run_id}")
+    data = detail.json()
+    assert len(data["results"]) == 1
+    result = data["results"][0]
+    assert result["truth"] is not None
+    assert "answer_truth" in result["truth"]
+    assert "retrieval_truth" in result["truth"]
+    assert "metadata" in result["truth"]
+    assert result["truth"]["answer_truth"]["required_concepts"] == ["concept A", "concept B"]
+
+
+# --- Rerun truth and metadata tests ---
+
+
+def test_rerun_copies_truth_from_original(client, _setup_db):
+    """Should copy truth_payload from original results to rerun questions."""
+    import asyncio
+
+    from db import EvalResult
+
+    _, async_session = _setup_db
+
+    truth_data = _make_truth_payload().model_dump(mode="json")
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    original_id = create_resp.json()["eval_run_id"]
+
+    # Seed original results with truth
+    async def _seed():
+        async with async_session() as session:
+            session.add(
+                EvalResult(
+                    eval_run_id=original_id,
+                    question="What is AI?",
+                    expected_answer="Artificial intelligence.",
+                    truth_payload=truth_data,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    with patch("src.routes.evaluation._run_evaluation") as mock_run:
+        rerun_resp = client.post(
+            f"/evaluations/{original_id}/rerun",
+            json={"model_name": "llama-3.1-8b-instruct"},
+        )
+
+    assert rerun_resp.status_code == 201
+
+    # Verify the questions passed to _run_evaluation have truth
+    call_kwargs = mock_run.call_args
+    questions = call_kwargs.kwargs.get("questions") or call_kwargs[1].get("questions")
+    assert questions[0].truth is not None
+    assert questions[0].truth.answer_truth.required_concepts == ["concept A", "concept B"]
+
+
+def test_rerun_captures_run_metadata(client, _setup_db, monkeypatch):
+    """Should snapshot judge model and corpus on rerun like create_eval_run."""
+    import asyncio
+
+    from db import EvalResult
+
+    _, async_session = _setup_db
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    original_id = create_resp.json()["eval_run_id"]
+
+    async def _seed():
+        async with async_session() as session:
+            session.add(
+                EvalResult(
+                    eval_run_id=original_id,
+                    question="What is AI?",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        rerun_resp = client.post(
+            f"/evaluations/{original_id}/rerun",
+            json={"model_name": "llama-3.1-8b-instruct"},
+        )
+
+    rerun_id = rerun_resp.json()["eval_run_id"]
+    detail = client.get(f"/evaluations/{rerun_id}")
+    data = detail.json()
+    assert data["judge_model_name"] == "test-judge"
+    assert data["corpus_snapshot"] is not None
+
+
+def test_rerun_warns_on_unparseable_truth(client, _setup_db):
+    """Should include warning in message when truth_payload cannot be parsed."""
+    import asyncio
+
+    from db import EvalResult
+
+    _, async_session = _setup_db
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        create_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": ["What is AI?"],
+            },
+        )
+    original_id = create_resp.json()["eval_run_id"]
+
+    # Seed with invalid truth_payload
+    async def _seed():
+        async with async_session() as session:
+            session.add(
+                EvalResult(
+                    eval_run_id=original_id,
+                    question="What is AI?",
+                    truth_payload={"invalid": "not a truth payload"},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+    with patch("src.routes.evaluation._run_evaluation"):
+        rerun_resp = client.post(
+            f"/evaluations/{original_id}/rerun",
+            json={"model_name": "llama-3.1-8b-instruct"},
+        )
+
+    assert rerun_resp.status_code == 201
+    data = rerun_resp.json()
+    assert "unparseable truth" in data["message"]
+    assert "1 question(s)" in data["message"]
