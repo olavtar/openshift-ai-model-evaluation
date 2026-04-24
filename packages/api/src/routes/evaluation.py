@@ -71,6 +71,7 @@ class _QuestionResult:
     chunk_alignment_score: float | None = None
     coverage_gaps: dict | None = None
     deterministic_checks: list[dict] | None = None
+    truth_payload: dict | None = None
     error: str | None = None
     verdict: QuestionVerdict | None = None
 
@@ -142,7 +143,11 @@ async def _process_question(
 
     question = q_item.question
     expected_answer = q_item.expected_answer
-    result = _QuestionResult(question=question, expected_answer=expected_answer)
+    result = _QuestionResult(
+        question=question,
+        expected_answer=expected_answer,
+        truth_payload=q_item.truth.model_dump(mode="json") if q_item.truth else None,
+    )
 
     async with semaphore:
         if eval_run_id in _cancelled_runs:
@@ -483,6 +488,7 @@ async def _run_evaluation(
                         chunk_alignment_score=qr.chunk_alignment_score,
                         coverage_gaps=qr.coverage_gaps,
                         deterministic_checks=qr.deterministic_checks,
+                        truth_payload=qr.truth_payload,
                         total_tokens=qr.tokens,
                     )
 
@@ -867,6 +873,7 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         chunk_alignment_score=r.chunk_alignment_score,
         coverage_gaps=r.coverage_gaps,
         deterministic_checks=r.deterministic_checks,
+        truth=r.truth_payload,
         verdict=r.verdict,
         fail_reasons=r.fail_reasons,
         total_tokens=r.total_tokens,
@@ -1208,19 +1215,54 @@ async def rerun_eval(
         raise HTTPException(status_code=404, detail="Evaluation run not found")
 
     results = await session.execute(
-        select(EvalResult.question, EvalResult.expected_answer)
+        select(EvalResult.question, EvalResult.expected_answer, EvalResult.truth_payload)
         .where(EvalResult.eval_run_id == eval_run_id)
         .order_by(EvalResult.id)
     )
-    questions = [EvalQuestion(question=row[0], expected_answer=row[1]) for row in results.all()]
+    from ..schemas.truth import TruthPayload
+
+    questions = []
+    truth_parse_failures = 0
+    for row in results.all():
+        truth = None
+        if row[2]:
+            try:
+                truth = TruthPayload.model_validate(row[2])
+            except Exception as e:
+                truth_parse_failures += 1
+                logger.warning(
+                    "Could not parse truth_payload for rerun of run %d, question '%.80s': %s",
+                    eval_run_id,
+                    row[0],
+                    e,
+                )
+        questions.append(EvalQuestion(question=row[0], expected_answer=row[1], truth=truth))
     if not questions:
         raise HTTPException(status_code=400, detail="Original run has no questions to re-run")
+
+    # Snapshot run metadata for reproducibility (same as create_eval_run)
+    retrieval_cfg = None
+    profile_version = None
+    profile_id = original_run.profile_id
+    if profile_id:
+        try:
+            prof = load_profile(profile_id)
+            retrieval_cfg = prof.retrieval.model_dump()
+            profile_version = prof.version
+        except (FileNotFoundError, ValueError):
+            pass
+
+    judge_model = settings.resolved_judge_model_name
+    corpus_snapshot = await _build_corpus_snapshot(session)
 
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=original_run.question_set_id,
-        profile_id=original_run.profile_id,
-        profile_version=original_run.profile_version,
+        profile_id=profile_id,
+        profile_version=profile_version,
+        judge_model_name=judge_model or None,
+        retrieval_config=retrieval_cfg,
+        corpus_snapshot=corpus_snapshot,
         status="pending",
         total_questions=len(questions),
     )
@@ -1242,10 +1284,17 @@ async def rerun_eval(
 
     await session.commit()
 
+    message = f"Re-run started with {len(questions)} questions from run #{eval_run_id}"
+    if truth_parse_failures:
+        message += (
+            f". Warning: {truth_parse_failures} question(s) had unparseable truth data"
+            " -- deterministic checks will be skipped for those questions."
+        )
+
     return EvalRunCreateResponse(
         eval_run_id=run_id,
         model_name=run_model,
         status=run_status,
         total_questions=run_total,
-        message=f"Re-run started with {len(questions)} questions from run #{eval_run_id}",
+        message=message,
     )
