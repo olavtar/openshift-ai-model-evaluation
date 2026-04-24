@@ -31,6 +31,7 @@ from ..schemas.evaluation import (
     SynthesizeResponse,
 )
 from ..services.coverage import detect_coverage_gaps
+from ..services.deterministic_checks import run_deterministic_checks
 from ..services.generation import generate_answer
 from ..services.profiles import EvalProfile, list_profiles, load_profile
 from ..services.query_decomposition import decompose_query
@@ -69,6 +70,7 @@ class _QuestionResult:
     scores: dict = field(default_factory=dict)
     chunk_alignment_score: float | None = None
     coverage_gaps: dict | None = None
+    deterministic_checks: list[dict] | None = None
     error: str | None = None
     verdict: QuestionVerdict | None = None
 
@@ -315,6 +317,13 @@ async def _process_question(
             if chunk_refs and chunks:
                 result.chunk_alignment_score = compute_chunk_alignment(chunks, chunk_refs)
 
+            # Run deterministic retrieval checks (fast, no LLM cost)
+            if chunks:
+                result.deterministic_checks = run_deterministic_checks(
+                    truth=q_item.truth,
+                    retrieved_chunks=chunks,
+                )
+
             if eval_run_id in _cancelled_runs:
                 return result
 
@@ -440,6 +449,7 @@ async def _run_evaluation(
                         is_hallucination=qr.scores.get("is_hallucination"),
                         chunk_alignment_score=qr.chunk_alignment_score,
                         coverage_gaps=qr.coverage_gaps,
+                        deterministic_checks=qr.deterministic_checks,
                         total_tokens=qr.tokens,
                     )
 
@@ -801,6 +811,7 @@ def _build_result_response(r: EvalResult) -> EvalResultResponse:
         is_hallucination=r.is_hallucination,
         chunk_alignment_score=r.chunk_alignment_score,
         coverage_gaps=r.coverage_gaps,
+        deterministic_checks=r.deterministic_checks,
         verdict=r.verdict,
         fail_reasons=r.fail_reasons,
         total_tokens=r.total_tokens,

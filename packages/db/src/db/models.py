@@ -163,6 +163,7 @@ class EvalResult(Base):
     verdict = Column(String(50), nullable=True)
     fail_reasons = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
     coverage_gaps = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    deterministic_checks = Column(JSON().with_variant(JSONB, "postgresql"), nullable=True)
     total_tokens = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
