@@ -1,15 +1,17 @@
 # This project was developed with assistance from AI tools.
 """Deterministic evaluation checks -- rule-based, no LLM judge required.
 
-These checks validate retrieval quality using string matching against
-structured truth payloads. They are cheaper, faster, more stable, and
-more explainable than judge-based scoring.
+These checks validate retrieval quality and answer quality using string
+matching and heuristics against structured truth payloads. They are
+cheaper, faster, more stable, and more explainable than judge-based scoring.
 
-Phase 2A includes retrieval checks only (document_presence, chunk_alignment).
-Generation checks (abstention, source reference) will be added in Phase 2B.
+Retrieval checks (document_presence, chunk_alignment) are strong gate
+candidates. Generation checks (abstention_validation, source_reference)
+are heuristic and stored as warnings initially.
 """
 
 import logging
+import re
 from dataclasses import asdict, dataclass
 
 from ..schemas.truth import TruthPayload
@@ -119,15 +121,132 @@ def check_chunk_alignment(
     )
 
 
+# Abstention signal phrases (case-insensitive matching)
+_ABSTENTION_SIGNALS = [
+    "i don't have enough information",
+    "i do not have enough information",
+    "the provided context does not",
+    "the context does not contain",
+    "insufficient information",
+    "cannot answer",
+    "unable to answer",
+    "not enough context",
+    "no relevant information",
+    "does not address",
+    "not mentioned in",
+    "not covered in the provided",
+    "i cannot determine",
+    "based on the available context, i cannot",
+]
+
+
+def _contains_abstention(text: str) -> bool:
+    """Check if text contains abstention signal phrases."""
+    lower = text.lower()
+    return any(signal in lower for signal in _ABSTENTION_SIGNALS)
+
+
+def check_abstention(
+    truth: TruthPayload,
+    answer: str,
+) -> CheckResult:
+    """Validate abstention behavior against truth expectations.
+
+    When abstention is expected, the answer should contain abstention signals.
+    When abstention is not expected, the answer should be substantive.
+
+    Args:
+        truth: Structured truth payload with abstention expectation.
+        answer: Model-generated answer text.
+
+    Returns:
+        CheckResult indicating whether abstention behavior matches expectation.
+    """
+    expected = truth.answer_truth.abstention_expected
+    has_abstention = _contains_abstention(answer)
+
+    if expected and not has_abstention:
+        return CheckResult(
+            check_name="abstention_validation",
+            passed=False,
+            detail="Model answered when it should have abstained",
+            category="generation",
+        )
+    if not expected and has_abstention:
+        return CheckResult(
+            check_name="abstention_validation",
+            passed=False,
+            detail="Model abstained when it should have answered",
+            category="generation",
+        )
+    return CheckResult(
+        check_name="abstention_validation",
+        passed=True,
+        detail="Abstention behavior matches expectation",
+        category="generation",
+    )
+
+
+def check_source_reference(
+    answer: str,
+    retrieved_chunks: list[dict],
+) -> CheckResult:
+    """Check if the answer references documents not present in retrieval context.
+
+    Looks for filename-like patterns in the answer and verifies they appear
+    in the retrieved chunk source documents.
+
+    Args:
+        answer: Model-generated answer text.
+        retrieved_chunks: Chunks from retrieval pipeline.
+
+    Returns:
+        CheckResult indicating whether all referenced sources are supported.
+    """
+    file_pattern = re.compile(r"\b([\w\-]+\.(?:pdf|docx?|txt|csv|xlsx?))\b", re.IGNORECASE)
+    referenced_files = set(file_pattern.findall(answer))
+
+    if not referenced_files:
+        return CheckResult(
+            check_name="source_reference",
+            passed=True,
+            detail="No document references found in answer",
+            category="generation",
+        )
+
+    context_docs = {c.get("source_document", "") for c in retrieved_chunks}
+    unsupported = [f for f in referenced_files if f not in context_docs]
+
+    if unsupported:
+        return CheckResult(
+            check_name="source_reference",
+            passed=False,
+            detail=f"Answer references documents not in context: {unsupported}",
+            category="generation",
+        )
+    return CheckResult(
+        check_name="source_reference",
+        passed=True,
+        detail=f"All {len(referenced_files)} document references are supported by context",
+        category="generation",
+    )
+
+
 def run_deterministic_checks(
     truth: TruthPayload | None,
     retrieved_chunks: list[dict],
+    answer: str | None = None,
 ) -> list[dict]:
-    """Run retrieval deterministic checks and return results as serializable dicts.
+    """Run deterministic checks and return results as serializable dicts.
+
+    Retrieval checks (document_presence, chunk_alignment) always run when
+    truth is available. Generation checks (abstention_validation,
+    source_reference) run when an answer is also provided.
 
     Args:
         truth: Structured truth payload (may be None for questions without truth).
         retrieved_chunks: Chunks from retrieval pipeline.
+        answer: Model-generated answer text (optional; enables generation checks).
 
     Returns:
         List of check result dicts, each with check_name, passed, detail, category.
@@ -140,5 +259,9 @@ def run_deterministic_checks(
         check_document_presence(truth, retrieved_chunks),
         check_chunk_alignment(truth, retrieved_chunks),
     ]
+
+    if answer:
+        results.append(check_abstention(truth, answer))
+        results.append(check_source_reference(answer, retrieved_chunks))
 
     return [asdict(r) for r in results]

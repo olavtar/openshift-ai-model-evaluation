@@ -207,3 +207,129 @@ def test_run_verdict_review_required(fsi_profile):
     run_verdict = compute_run_verdict(verdicts)
     assert run_verdict.overall == "REVIEW_REQUIRED"
     assert run_verdict.review_count == 1
+
+
+# --- Deterministic check integration ---
+
+
+def test_verdict_fail_on_retrieval_check_failure(fsi_profile):
+    """Should return FAIL when a retrieval deterministic check fails."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": False,
+            "detail": "Missing",
+            "category": "retrieval",
+        },
+    ]
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=checks)
+    assert verdict.verdict == "FAIL"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" in verdict.fail_reasons
+    assert "document_presence" in verdict.failed_metrics
+
+
+def test_verdict_fail_on_chunk_alignment_failure(fsi_profile):
+    """Should return FAIL when chunk_alignment check fails."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "0/3",
+            "category": "retrieval",
+        },
+    ]
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=checks)
+    assert verdict.verdict == "FAIL"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" in verdict.fail_reasons
+
+
+def test_verdict_pass_with_passing_retrieval_checks(fsi_profile):
+    """Should not affect verdict when retrieval checks pass."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "OK",
+            "category": "retrieval",
+        },
+        {"check_name": "chunk_alignment", "passed": True, "detail": "2/2", "category": "retrieval"},
+    ]
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=checks)
+    assert verdict.verdict == "PASS"
+    assert len(verdict.fail_reasons) == 0
+
+
+def test_verdict_ignores_generation_check_failures(fsi_profile):
+    """Should not fail verdict based on generation check failures (warnings only)."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "abstention_validation",
+            "passed": False,
+            "detail": "Mismatch",
+            "category": "generation",
+        },
+        {
+            "check_name": "source_reference",
+            "passed": False,
+            "detail": "Unsupported",
+            "category": "generation",
+        },
+    ]
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=checks)
+    assert verdict.verdict == "PASS"
+    assert len(verdict.fail_reasons) == 0
+
+
+def test_verdict_no_duplicate_retrieval_reasons(fsi_profile):
+    """Should not duplicate FAIL_RETRIEVAL_INCOMPLETE when both retrieval checks fail."""
+    scores = {
+        "groundedness_score": 0.9,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": False,
+            "detail": "Missing",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "0/2",
+            "category": "retrieval",
+        },
+    ]
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=checks)
+    assert verdict.verdict == "FAIL"
+    assert verdict.fail_reasons.count("FAIL_RETRIEVAL_INCOMPLETE") == 1
+
+
+def test_verdict_none_deterministic_checks(fsi_profile):
+    """Should behave normally when deterministic_checks is None."""
+    scores = {
+        "groundedness_score": 0.9,
+        "abstention_score": 0.9,
+    }
+    verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=None)
+    assert verdict.verdict == "PASS"

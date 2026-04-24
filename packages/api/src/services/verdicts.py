@@ -50,21 +50,39 @@ _FAIL_REASON_MAP = {
 }
 
 
+# Deterministic check names that can force a FAIL verdict.
+# Retrieval checks are objective (tied to structured truth refs) and are
+# strong gate candidates. Generation checks (abstention, source_reference)
+# are heuristic and stored as warnings only.
+_DETERMINISTIC_FAIL_CHECKS = frozenset({"document_presence", "chunk_alignment"})
+
+_DETERMINISTIC_FAIL_REASON_MAP = {
+    "document_presence": "FAIL_RETRIEVAL_INCOMPLETE",
+    "chunk_alignment": "FAIL_RETRIEVAL_INCOMPLETE",
+}
+
+
 def compute_question_verdict(
     scores: dict[str, float | None],
     profile: EvalProfile,
+    deterministic_checks: list[dict] | None = None,
 ) -> QuestionVerdict:
     """Apply profile thresholds to metric scores and produce a verdict.
 
     Logic:
+    - If any deterministic retrieval check fails -> FAIL
     - If any metric is below its critical_threshold -> FAIL
     - If any metric is below its regular threshold -> REVIEW_REQUIRED
     - If all pass -> PASS
     - Metrics with None scores are skipped (not penalized).
+    - Generation checks (abstention, source_reference) are recorded but
+      do not affect the verdict.
 
     Args:
         scores: Dict of metric_name -> score (from score_result()).
         profile: The evaluation profile with thresholds.
+        deterministic_checks: Optional list of deterministic check result dicts,
+            each with check_name, passed, detail, category.
 
     Returns:
         QuestionVerdict with verdict, fail_reasons, and metric lists.
@@ -75,7 +93,18 @@ def compute_question_verdict(
     passed_metrics: list[str] = []
     failed_metrics: list[str] = []
 
-    # Check critical thresholds first
+    # Check deterministic retrieval gates first
+    if deterministic_checks:
+        for check in deterministic_checks:
+            name = check.get("check_name", "")
+            if name in _DETERMINISTIC_FAIL_CHECKS and not check.get("passed", True):
+                has_critical_fail = True
+                reason = _DETERMINISTIC_FAIL_REASON_MAP.get(name, f"FAIL_{name.upper()}")
+                if reason not in fail_reasons:
+                    fail_reasons.append(reason)
+                failed_metrics.append(name)
+
+    # Check critical thresholds
     for metric_key, critical_threshold in profile.critical_thresholds.items():
         score = scores.get(metric_key)
         if score is None:
