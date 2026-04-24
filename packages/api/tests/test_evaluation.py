@@ -1,7 +1,9 @@
 # This project was developed with assistance from AI tools.
 """Tests for evaluation endpoints (/evaluations)."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from src.core.config import settings
 
 # --- Tests ---
 
@@ -187,3 +189,143 @@ def test_compare_not_found(client):
 
     response = client.get(f"/evaluations/compare?run_a_id={run_id}&run_b_id=999")
     assert response.status_code == 404
+
+
+# --- Inline truth generation tests ---
+
+
+def _make_truth_payload():
+    """Build a mock TruthPayload for testing."""
+    from src.schemas.truth import (
+        AnswerTruth,
+        RetrievalTruth,
+        TruthMetadata,
+        TruthPayload,
+    )
+
+    return TruthPayload(
+        answer_truth=AnswerTruth(required_concepts=["concept A", "concept B"]),
+        retrieval_truth=RetrievalTruth(
+            required_documents=["doc.pdf"],
+            expected_chunk_refs=["chunk:1"],
+            evidence_mode="grounded_from_manual_answer",
+        ),
+        metadata=TruthMetadata(
+            generated_by_model="test-judge",
+            generated_at="2026-01-01T00:00:00",
+            source_chunk_ids=[1],
+        ),
+    )
+
+
+def test_create_eval_run_generates_truth_for_inline_questions(client, monkeypatch):
+    """Should generate truth for inline questions with expected answers."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    truth = _make_truth_payload()
+
+    with (
+        patch("src.routes.evaluation._run_evaluation"),
+        patch(
+            "src.routes.evaluation.generate_truth_from_manual_answer",
+            new_callable=AsyncMock,
+            return_value=truth,
+        ) as mock_gen,
+    ):
+        response = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": [
+                    {"question": "What is AI?", "expected_answer": "Artificial intelligence."},
+                ],
+            },
+        )
+
+    assert response.status_code == 201
+    mock_gen.assert_called_once()
+
+
+def test_create_eval_run_skips_truth_when_no_judge(client, monkeypatch):
+    """Should not generate truth when no judge model is configured."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "", raising=False)
+    monkeypatch.setattr(settings, "MODEL_A_NAME", "", raising=False)
+    monkeypatch.setattr(settings, "MODEL_B_NAME", "", raising=False)
+
+    with (
+        patch("src.routes.evaluation._run_evaluation"),
+        patch(
+            "src.routes.evaluation.generate_truth_from_manual_answer",
+            new_callable=AsyncMock,
+        ) as mock_gen,
+    ):
+        response = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": [
+                    {"question": "What is AI?", "expected_answer": "Artificial intelligence."},
+                ],
+            },
+        )
+
+    assert response.status_code == 201
+    mock_gen.assert_not_called()
+
+
+def test_create_eval_run_skips_truth_when_already_present(client, monkeypatch):
+    """Should not regenerate truth when question already has truth."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    truth_dict = _make_truth_payload().model_dump(mode="json")
+
+    with (
+        patch("src.routes.evaluation._run_evaluation"),
+        patch(
+            "src.routes.evaluation.generate_truth_from_manual_answer",
+            new_callable=AsyncMock,
+        ) as mock_gen,
+    ):
+        response = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": [
+                    {
+                        "question": "What is AI?",
+                        "expected_answer": "Artificial intelligence.",
+                        "truth": truth_dict,
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 201
+    mock_gen.assert_not_called()
+
+
+def test_create_eval_run_graceful_on_truth_failure(client, monkeypatch):
+    """Should still create run when truth generation fails."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    with (
+        patch("src.routes.evaluation._run_evaluation"),
+        patch(
+            "src.routes.evaluation.generate_truth_from_manual_answer",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM unavailable"),
+        ),
+    ):
+        response = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "granite-3.1-8b-instruct",
+                "questions": [
+                    {"question": "What is AI?", "expected_answer": "Artificial intelligence."},
+                ],
+            },
+        )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["total_questions"] == 1

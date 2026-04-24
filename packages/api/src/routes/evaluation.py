@@ -38,6 +38,7 @@ from ..services.retrieval import _apply_diversity, _deduplicate_chunks, retrieve
 from ..services.safety import check_input_safety
 from ..services.scoring import compute_chunk_alignment, score_result
 from ..services.synthesizer import generate_questions
+from ..services.truth_generation import generate_truth_from_manual_answer
 from ..services.verdicts import (
     QuestionVerdict,
     compute_comparison_decision,
@@ -564,6 +565,18 @@ async def create_eval_run(
         else:
             normalized.append(q)
 
+    # Generate truth for questions with expected answers but no truth
+    judge_model = settings.resolved_judge_model_name
+    if judge_model:
+        for q in normalized:
+            if q.expected_answer and not q.truth:
+                try:
+                    q.truth = await generate_truth_from_manual_answer(
+                        q.expected_answer, session, judge_model
+                    )
+                except Exception as e:
+                    logger.warning("Truth generation failed for inline question: %s", e)
+
     run = EvalRun(
         model_name=request.model_name,
         question_set_id=request.question_set_id,
@@ -728,6 +741,7 @@ async def synthesize_questions(
             SynthesizedQuestion(
                 question=q["question"],
                 expected_answer=q.get("expected_answer"),
+                truth=q.get("truth"),
             )
             for q in questions
         ],

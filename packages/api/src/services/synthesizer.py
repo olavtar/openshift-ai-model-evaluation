@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from .generation import GENERATION_TIMEOUT, _summarize_upstream_error
+from .truth_generation import generate_truth_from_synthesis
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def generate_questions(
         List of dicts with 'question' and 'expected_answer' keys.
     """
     query = (
-        select(Chunk.text)
+        select(Chunk.id, Chunk.text, Chunk.source_document)
         .join(Document, Chunk.document_id == Document.id)
         .where(Document.status == "ready", Document.deleted_at.is_(None))
     )
@@ -96,7 +97,9 @@ async def generate_questions(
     query = query.order_by(Chunk.id).limit(MAX_CONTEXTS)
 
     result = await session.execute(query)
-    chunk_texts = [row[0] for row in result.all()]
+    rows = result.all()
+    chunk_data = [{"id": row[0], "text": row[1], "source_document": row[2]} for row in rows]
+    chunk_texts = [c["text"] for c in chunk_data]
 
     if not chunk_texts:
         return []
@@ -151,6 +154,19 @@ async def generate_questions(
                         "expected_answer": item.get("expected_answer"),
                     }
                 )
+
+        # Generate structured truth for each question with an expected answer
+        judge_model = settings.resolved_judge_model_name
+        if judge_model and chunk_data:
+            for q in questions:
+                if q.get("expected_answer"):
+                    try:
+                        truth = await generate_truth_from_synthesis(
+                            q["expected_answer"], chunk_data, judge_model
+                        )
+                        q["truth"] = truth
+                    except Exception as e:
+                        logger.warning("Truth generation failed for synthesized question: %s", e)
 
         return questions
 
