@@ -383,3 +383,115 @@ def test_synthesize_graceful_on_truth_failure(client, _setup_db):
     assert q["expected_answer"] is not None
 
     monkeypatch.undo()
+
+
+# --- Balanced sampling tests ---
+
+
+def test_balanced_sample_distributes_across_documents():
+    """Should give each document at least MIN_CHUNKS_PER_DOC chunks."""
+    from src.services.synthesizer import _balanced_sample
+
+    chunks_by_doc = {
+        1: [{"id": i, "text": f"chunk {i}", "source_document": "a.pdf"} for i in range(20)],
+        2: [
+            {"id": 20 + i, "text": f"chunk {20 + i}", "source_document": "b.pdf"} for i in range(5)
+        ],
+        3: [
+            {"id": 25 + i, "text": f"chunk {25 + i}", "source_document": "c.pdf"} for i in range(3)
+        ],
+    }
+
+    result = _balanced_sample(chunks_by_doc, budget=10)
+    assert len(result) == 10
+
+    # Each document should have at least some representation
+    docs_in_result = {c["source_document"] for c in result}
+    assert docs_in_result == {"a.pdf", "b.pdf", "c.pdf"}
+
+
+def test_balanced_sample_respects_budget():
+    """Should not exceed the budget."""
+    from src.services.synthesizer import _balanced_sample
+
+    chunks_by_doc = {
+        1: [{"id": i, "text": f"chunk {i}", "source_document": "a.pdf"} for i in range(100)],
+    }
+    result = _balanced_sample(chunks_by_doc, budget=10)
+    assert len(result) <= 10
+
+
+def test_balanced_sample_handles_small_documents():
+    """Should take all chunks from documents smaller than MIN_CHUNKS_PER_DOC."""
+    from src.services.synthesizer import _balanced_sample
+
+    chunks_by_doc = {
+        1: [{"id": 1, "text": "only chunk", "source_document": "tiny.pdf"}],
+        2: [{"id": 2 + i, "text": f"chunk {i}", "source_document": "big.pdf"} for i in range(20)],
+    }
+    result = _balanced_sample(chunks_by_doc, budget=10)
+    # tiny.pdf has only 1 chunk, should get it
+    tiny_chunks = [c for c in result if c["source_document"] == "tiny.pdf"]
+    assert len(tiny_chunks) == 1
+
+
+def test_balanced_sample_empty_input():
+    """Should return empty list for empty input."""
+    from src.services.synthesizer import _balanced_sample
+
+    assert _balanced_sample({}, budget=10) == []
+
+
+def test_balanced_sample_sorted_by_id():
+    """Should return chunks sorted by ID for stable prompt ordering."""
+    from src.services.synthesizer import _balanced_sample
+
+    chunks_by_doc = {
+        1: [{"id": 10, "text": "a", "source_document": "a.pdf"}],
+        2: [{"id": 5, "text": "b", "source_document": "b.pdf"}],
+        3: [{"id": 15, "text": "c", "source_document": "c.pdf"}],
+    }
+    result = _balanced_sample(chunks_by_doc, budget=10)
+    ids = [c["id"] for c in result]
+    assert ids == sorted(ids)
+
+
+# --- Per-question chunk alignment tests ---
+
+
+def test_align_chunks_finds_matching_content():
+    """Should align chunks whose content appears in the expected answer."""
+    from src.services.truth_generation import _align_chunks_to_answer
+
+    chunks = [
+        {"id": 1, "text": "The SEC requires quarterly filings for all registered advisers."},
+        {"id": 2, "text": "Python is a popular programming language."},
+        {"id": 3, "text": "FINRA mandates supervisory procedures for broker-dealers."},
+    ]
+    answer = "The SEC requires quarterly filings for all registered advisers."
+    aligned = _align_chunks_to_answer(answer, chunks)
+    aligned_ids = {c["id"] for c in aligned}
+    assert 1 in aligned_ids
+    assert 2 not in aligned_ids
+
+
+def test_align_chunks_falls_back_when_no_overlap():
+    """Should return all chunks when no content overlap is found."""
+    from src.services.truth_generation import _align_chunks_to_answer
+
+    chunks = [
+        {"id": 1, "text": "Completely unrelated content about weather."},
+        {"id": 2, "text": "Another unrelated topic about cooking."},
+    ]
+    answer = "The SEC requires quarterly filings."
+    aligned = _align_chunks_to_answer(answer, chunks)
+    assert len(aligned) == 2  # falls back to all
+
+
+def test_align_chunks_handles_empty_inputs():
+    """Should handle empty answer or empty chunks gracefully."""
+    from src.services.truth_generation import _align_chunks_to_answer
+
+    chunks = [{"id": 1, "text": "Some content."}]
+    assert _align_chunks_to_answer("", chunks) == chunks
+    assert _align_chunks_to_answer("answer", []) == []

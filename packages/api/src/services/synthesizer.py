@@ -3,6 +3,8 @@
 
 import json
 import logging
+import random
+from collections import defaultdict
 
 import httpx
 from db import Chunk, Document
@@ -16,6 +18,7 @@ from .truth_generation import generate_truth_from_synthesis
 logger = logging.getLogger(__name__)
 
 MAX_CONTEXTS = 50
+_MIN_CHUNKS_PER_DOC = 2
 
 
 _SYNTHESIZE_PROMPT = """\
@@ -49,6 +52,75 @@ _DOMAIN_RULES: dict[str, str] = {
         "regulatory deadlines, reporting requirements, and escalation procedures."
     ),
 }
+
+
+def _balanced_sample(
+    chunks_by_doc: dict[int, list[dict]],
+    budget: int,
+) -> list[dict]:
+    """Select chunks with equal-first-with-caps distribution across documents.
+
+    Each document gets at least ``_MIN_CHUNKS_PER_DOC`` chunks (or all
+    chunks if the document has fewer). Remaining budget is distributed
+    proportionally by chunk count. Within each document, chunks are
+    selected randomly to avoid insertion-order bias.
+
+    Args:
+        chunks_by_doc: Mapping of document_id -> list of chunk dicts.
+        budget: Maximum total chunks to return.
+
+    Returns:
+        List of chunk dicts, balanced across documents.
+    """
+    if not chunks_by_doc:
+        return []
+
+    doc_ids = sorted(chunks_by_doc.keys())
+    selected: list[dict] = []
+
+    # Phase 1: guarantee minimum allocation per document
+    remaining_budget = budget
+    per_doc_selected: dict[int, list[dict]] = {}
+    for doc_id in doc_ids:
+        pool = list(chunks_by_doc[doc_id])
+        random.shuffle(pool)
+        take = min(len(pool), _MIN_CHUNKS_PER_DOC, remaining_budget)
+        per_doc_selected[doc_id] = pool[:take]
+        remaining_budget -= take
+        if remaining_budget <= 0:
+            break
+
+    # Phase 2: distribute remaining budget proportionally by chunk count
+    if remaining_budget > 0:
+        eligible = {
+            doc_id: len(chunks_by_doc[doc_id]) - len(per_doc_selected.get(doc_id, []))
+            for doc_id in doc_ids
+            if len(chunks_by_doc[doc_id]) > len(per_doc_selected.get(doc_id, []))
+        }
+        total_eligible = sum(eligible.values())
+        if total_eligible > 0:
+            for doc_id in doc_ids:
+                extra_pool_size = eligible.get(doc_id, 0)
+                if extra_pool_size <= 0:
+                    continue
+                share = max(1, round(remaining_budget * extra_pool_size / total_eligible))
+                share = min(share, extra_pool_size, remaining_budget)
+                already_selected_ids = {c["id"] for c in per_doc_selected.get(doc_id, [])}
+                extra_pool = [
+                    c for c in chunks_by_doc[doc_id] if c["id"] not in already_selected_ids
+                ]
+                random.shuffle(extra_pool)
+                per_doc_selected.setdefault(doc_id, []).extend(extra_pool[:share])
+                remaining_budget -= share
+                if remaining_budget <= 0:
+                    break
+
+    # Flatten and sort by chunk ID for stable prompt ordering
+    for doc_id in doc_ids:
+        selected.extend(per_doc_selected.get(doc_id, []))
+    selected.sort(key=lambda c: c["id"])
+
+    return selected[:budget]
 
 
 def _parse_questions_json(raw: str) -> dict:
@@ -87,18 +159,22 @@ async def generate_questions(
         List of dicts with 'question' and 'expected_answer' keys.
     """
     query = (
-        select(Chunk.id, Chunk.text, Chunk.source_document)
+        select(Chunk.id, Chunk.text, Chunk.source_document, Chunk.document_id)
         .join(Document, Chunk.document_id == Document.id)
         .where(Document.status == "ready", Document.deleted_at.is_(None))
     )
     if document_ids:
         query = query.where(Chunk.document_id.in_(document_ids))
 
-    query = query.order_by(Chunk.id).limit(MAX_CONTEXTS)
-
     result = await session.execute(query)
     rows = result.all()
-    chunk_data = [{"id": row[0], "text": row[1], "source_document": row[2]} for row in rows]
+
+    # Group chunks by document for balanced sampling
+    chunks_by_doc: dict[int, list[dict]] = defaultdict(list)
+    for row in rows:
+        chunks_by_doc[row[3]].append({"id": row[0], "text": row[1], "source_document": row[2]})
+
+    chunk_data = _balanced_sample(chunks_by_doc, MAX_CONTEXTS)
     chunk_texts = [c["text"] for c in chunk_data]
 
     if not chunk_texts:
