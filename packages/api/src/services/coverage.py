@@ -271,6 +271,7 @@ async def detect_coverage_gaps(
     contexts: list[str] | None = None,
     model_name: str | None = None,
     question: str | None = None,
+    pre_extracted_concepts: list[str] | None = None,
 ) -> dict | None:
     """Extract key concepts from expected answer and check coverage.
 
@@ -289,6 +290,9 @@ async def detect_coverage_gaps(
         model_name: Model to use for analysis. Defaults to the judge model.
         question: Optional eval question; included in the concept cache key when
             the same expected answer appears under different questions.
+        pre_extracted_concepts: When provided, skip LLM concept extraction
+            and use these concepts directly. Used when structured truth is
+            available from truth generation.
 
     Returns:
         Dict with 'concepts', 'covered', 'missing', 'coverage_ratio',
@@ -308,12 +312,15 @@ async def detect_coverage_gaps(
     endpoint = model_cfg["endpoint"]
     token = model_cfg["token"]
 
-    cache_key = _concept_cache_key(question, expected_answer)
-
-    # Phase 1: extract concepts (cached)
-    concepts = await _extract_concepts(
-        expected_answer, resolved_model, endpoint, token, cache_key=cache_key
-    )
+    # Phase 1: use pre-extracted concepts or extract via LLM (cached)
+    if pre_extracted_concepts:
+        concepts = pre_extracted_concepts
+        logger.info("Using %d pre-extracted concepts from structured truth", len(concepts))
+    else:
+        cache_key = _concept_cache_key(question, expected_answer)
+        concepts = await _extract_concepts(
+            expected_answer, resolved_model, endpoint, token, cache_key=cache_key
+        )
     if not concepts:
         return None
 

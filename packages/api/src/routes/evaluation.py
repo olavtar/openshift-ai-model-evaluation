@@ -204,9 +204,7 @@ async def _process_question(
                     top_k = retrieval_kwargs.get("top_k", 10)
                     diversity_min = retrieval_kwargs.get("diversity_min", 3)
                     max_per_doc = retrieval_kwargs.get("max_per_doc")
-                    threshold = retrieval_kwargs.get(
-                        "diversity_relevance_threshold", 0.3
-                    )
+                    threshold = retrieval_kwargs.get("diversity_relevance_threshold", 0.3)
                     chunks = _apply_diversity(
                         all_chunks,
                         top_k=top_k,
@@ -218,9 +216,7 @@ async def _process_question(
                     # Sub-query representation: ensure each sub-query contributes
                     # at least one chunk when enabled on the profile.
                     if retrieval_kwargs.get("ensure_sub_query_representation", True):
-                        swap_mult = retrieval_kwargs.get(
-                            "sub_query_swap_score_multiplier", 1.1
-                        )
+                        swap_mult = retrieval_kwargs.get("sub_query_swap_score_multiplier", 1.1)
                         min_swap_score = threshold * swap_mult
                         represented_sqs = {
                             chunk_sub_queries[c["id"]]
@@ -309,11 +305,14 @@ async def _process_question(
                     context_parts.append(f"[{header}]\n{c['text']}")
                 result.contexts_str = "\n---\n".join(context_parts)
 
-            # Compute chunk alignment if expected_chunks provided
-            if q_item.expected_chunks and chunks:
-                result.chunk_alignment_score = compute_chunk_alignment(
-                    chunks, q_item.expected_chunks
-                )
+            # Compute chunk alignment: prefer truth refs, fall back to expected_chunks
+            chunk_refs = None
+            if q_item.truth and q_item.truth.retrieval_truth.expected_chunk_refs:
+                chunk_refs = q_item.truth.retrieval_truth.expected_chunk_refs
+            elif q_item.expected_chunks:
+                chunk_refs = q_item.expected_chunks
+            if chunk_refs and chunks:
+                result.chunk_alignment_score = compute_chunk_alignment(chunks, chunk_refs)
 
             if eval_run_id in _cancelled_runs:
                 return result
@@ -329,11 +328,15 @@ async def _process_question(
 
             # Detect coverage gaps when expected_answer is available
             if expected_answer and gen_result["answer"]:
+                pre_concepts = None
+                if q_item.truth and q_item.truth.answer_truth.required_concepts:
+                    pre_concepts = q_item.truth.answer_truth.required_concepts
                 result.coverage_gaps = await detect_coverage_gaps(
                     expected_answer=expected_answer,
                     actual_answer=gen_result["answer"],
                     contexts=context_texts or None,
                     question=question,
+                    pre_extracted_concepts=pre_concepts,
                 )
 
             # Compute per-question verdict if profile is loaded

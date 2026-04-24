@@ -228,14 +228,16 @@ def compute_chunk_alignment(
     """Score how well retrieved chunks match expected source chunks.
 
     Deterministic recall metric -- no LLM call required. Each expected chunk
-    is a reference string like ``"filename.pdf"`` or ``"filename.pdf:3"``.
-    A retrieved chunk matches if its ``source_document`` matches the filename
-    and, when a page is specified, its ``page_number`` also matches.
+    is a reference string in one of three formats:
+
+    - ``"chunk:{id}"`` -- canonical format, matches on chunk database ID
+    - ``"filename.pdf:3"`` -- legacy format, matches on document + page
+    - ``"filename.pdf"`` -- legacy format, matches on document name only
 
     Args:
-        retrieved_chunks: Chunks from retrieval, each with ``source_document``
-            and optionally ``page_number``.
-        expected_chunks: Expected chunk references (``"file"`` or ``"file:page"``).
+        retrieved_chunks: Chunks from retrieval, each with ``id``,
+            ``source_document``, and optionally ``page_number``.
+        expected_chunks: Expected chunk references.
 
     Returns:
         Recall score between 0.0 and 1.0 (matched / expected).
@@ -243,10 +245,13 @@ def compute_chunk_alignment(
     if not expected_chunks:
         return 1.0
 
-    # Build set of (source_document, page_number|None) from retrieved chunks
+    # Build lookup structures from retrieved chunks
+    retrieved_ids: set[int] = set()
     retrieved_set: set[tuple[str, str | None]] = set()
     retrieved_docs: set[str] = set()
     for chunk in retrieved_chunks:
+        if chunk.get("id") is not None:
+            retrieved_ids.add(int(chunk["id"]))
         doc = chunk.get("source_document", "")
         page = str(chunk["page_number"]) if chunk.get("page_number") else None
         retrieved_set.add((doc, page))
@@ -254,7 +259,15 @@ def compute_chunk_alignment(
 
     matched = 0
     for ref in expected_chunks:
-        if ":" in ref:
+        if ref.startswith("chunk:"):
+            # Canonical chunk ID format
+            try:
+                chunk_id = int(ref[6:])
+                if chunk_id in retrieved_ids:
+                    matched += 1
+            except ValueError:
+                pass
+        elif ":" in ref:
             doc, page = ref.rsplit(":", 1)
             # Match on both document and page
             if (doc, page) in retrieved_set:
