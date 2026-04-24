@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import settings
 from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
+from ..services.truth_generation import generate_truth_from_manual_answer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -44,6 +46,20 @@ async def create_question_set(
             normalized.append({"question": q})
         else:
             normalized.append(q.model_dump(exclude_none=True))
+
+    # Generate truth for questions with expected answers but no truth
+    judge_model = settings.resolved_judge_model_name
+    if judge_model:
+        for q in normalized:
+            if q.get("expected_answer") and not q.get("truth"):
+                try:
+                    truth = await generate_truth_from_manual_answer(
+                        q["expected_answer"], session, judge_model
+                    )
+                    q["truth"] = truth.model_dump(mode="json")
+                except Exception as e:
+                    logger.warning("Truth generation failed for manual question: %s", e)
+
     qs = QuestionSet(name=request.name, questions=normalized)
     session.add(qs)
     await session.flush()

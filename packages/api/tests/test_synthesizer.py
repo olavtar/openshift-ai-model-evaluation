@@ -200,7 +200,8 @@ def test_synthesize_with_fsi_profile(client, _setup_db):
     assert response.status_code == 200
     assert response.json()["count"] == 1
     # Verify the prompt sent to the model includes FSI-specific rules
-    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    # Use call_args_list[0] to get the synthesis call (truth generation adds subsequent calls)
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args_list[0]
     payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
     prompt_content = payload["messages"][0]["content"]
     assert "SEC/FINRA" in prompt_content
@@ -220,7 +221,8 @@ def test_synthesize_without_profile_uses_default_rules(client, _setup_db):
         )
 
     assert response.status_code == 200
-    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    # Use call_args_list[0] to get the synthesis call (truth generation adds subsequent calls)
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args_list[0]
     payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
     prompt_content = payload["messages"][0]["content"]
     assert "SEC/FINRA" not in prompt_content
@@ -242,7 +244,8 @@ def test_synthesize_with_invalid_profile_falls_back_to_default(client, _setup_db
 
     assert response.status_code == 200
     assert response.json()["count"] == 1
-    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args
+    # Use call_args_list[0] to get the synthesis call (truth generation adds subsequent calls)
+    call_kwargs = mock_httpx.return_value.__aenter__.return_value.post.call_args_list[0]
     payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs.kwargs["json"]
     prompt_content = payload["messages"][0]["content"]
     assert "SEC/FINRA" not in prompt_content
@@ -257,3 +260,126 @@ def test_domain_rules_mapping():
     assert "SEC/FINRA" in _DOMAIN_RULES["fsi"]
     assert _DEFAULT_DOMAIN_RULES
     assert "SEC/FINRA" not in _DEFAULT_DOMAIN_RULES
+
+
+# --- Truth generation tests ---
+
+
+def test_synthesize_returns_truth_when_judge_configured(client, _setup_db):
+    """Should include truth payload in synthesized questions when judge model is available."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    concepts_json = '["AI simulates human intelligence"]'
+
+    # Two HTTP calls per question: 1 synthesis + 1 concept extraction
+    synth_response = MagicMock()
+    synth_response.raise_for_status = MagicMock()
+    synth_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "questions": [
+                                {
+                                    "question": "What is AI?",
+                                    "expected_answer": "AI is the simulation of human intelligence.",
+                                }
+                            ]
+                        }
+                    )
+                }
+            }
+        ]
+    }
+
+    concept_response = MagicMock()
+    concept_response.raise_for_status = MagicMock()
+    concept_response.json.return_value = {"choices": [{"message": {"content": concepts_json}}]}
+
+    mock_inner = MagicMock()
+    mock_inner.post = AsyncMock(side_effect=[synth_response, concept_response])
+
+    mock_ac = MagicMock()
+    mock_ac.return_value.__aenter__ = AsyncMock(return_value=mock_inner)
+    mock_ac.return_value.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("src.services.synthesizer.httpx.AsyncClient", mock_ac),
+        patch("src.services.truth_generation.httpx.AsyncClient", mock_ac),
+    ):
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 1},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 1
+    q = data["questions"][0]
+    assert q["truth"] is not None
+    assert "answer_truth" in q["truth"]
+    assert "retrieval_truth" in q["truth"]
+    assert "metadata" in q["truth"]
+    assert q["truth"]["retrieval_truth"]["evidence_mode"] == "traced_from_synthesis"
+    assert len(q["truth"]["answer_truth"]["required_concepts"]) > 0
+
+    monkeypatch.undo()
+
+
+def test_synthesize_works_without_judge_model(client, _setup_db):
+    """Should return questions without truth when no judge model is configured."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "", raising=False)
+
+    with _patch_httpx_synthesize(
+        [{"question": "What is AI?", "expected_answer": "AI is artificial intelligence."}]
+    ):
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 1},
+        )
+
+    assert response.status_code == 200
+    q = response.json()["questions"][0]
+    assert q.get("truth") is None
+
+    monkeypatch.undo()
+
+
+def test_synthesize_graceful_on_truth_failure(client, _setup_db):
+    """Should return questions without truth when truth generation fails."""
+    _, async_session = _setup_db
+    _seed_documents_and_chunks(async_session)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+
+    with (
+        _patch_httpx_synthesize(
+            [{"question": "What is AI?", "expected_answer": "AI is artificial intelligence."}]
+        ),
+        patch(
+            "src.services.synthesizer.generate_truth_from_synthesis",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM unavailable"),
+        ),
+    ):
+        response = client.post(
+            "/evaluations/synthesize",
+            json={"max_questions": 1},
+        )
+
+    assert response.status_code == 200
+    q = response.json()["questions"][0]
+    assert q.get("truth") is None
+    assert q["expected_answer"] is not None
+
+    monkeypatch.undo()
