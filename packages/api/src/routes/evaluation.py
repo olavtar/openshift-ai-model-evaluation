@@ -317,11 +317,12 @@ async def _process_question(
             if chunk_refs and chunks:
                 result.chunk_alignment_score = compute_chunk_alignment(chunks, chunk_refs)
 
-            # Run deterministic retrieval checks (fast, no LLM cost)
+            # Run deterministic checks (fast, no LLM cost)
             if chunks:
                 result.deterministic_checks = run_deterministic_checks(
                     truth=q_item.truth,
                     retrieved_chunks=chunks,
+                    answer=gen_result.get("answer"),
                 )
 
             if eval_run_id in _cancelled_runs:
@@ -351,7 +352,11 @@ async def _process_question(
 
             # Compute per-question verdict if profile is loaded
             if profile and result.scores:
-                result.verdict = compute_question_verdict(result.scores, profile)
+                result.verdict = compute_question_verdict(
+                    result.scores,
+                    profile,
+                    deterministic_checks=result.deterministic_checks,
+                )
 
         except Exception as e:
             logger.error("Eval question failed: %s", e)
@@ -841,6 +846,30 @@ def _compare_metric(
     return ComparisonMetric(metric=name, run_a=val_a, run_b=val_b, winner=winner)
 
 
+def _deterministic_pass_rate(results: dict[str, EvalResult], check_name: str) -> float | None:
+    """Compute the pass rate for a deterministic check across question results.
+
+    Args:
+        results: Dict of question text -> EvalResult.
+        check_name: Name of the deterministic check to aggregate.
+
+    Returns:
+        Pass rate as a float (0.0-1.0), or None if no results have the check.
+    """
+    total = 0
+    passed = 0
+    for r in results.values():
+        if not r.deterministic_checks:
+            continue
+        for check in r.deterministic_checks:
+            if check.get("check_name") == check_name:
+                total += 1
+                if check.get("passed"):
+                    passed += 1
+                break
+    return passed / total if total > 0 else None
+
+
 def _load_comparison_profile(run_a: EvalRun, run_b: EvalRun) -> EvalProfile | None:
     """Try to load a profile for comparison gates.
 
@@ -911,6 +940,12 @@ async def compare_eval_runs(
 
     a_by_question = {r.question: r for r in results_a.scalars().all()}
     b_by_question = {r.question: r for r in results_b.scalars().all()}
+
+    # Add deterministic check pass rates as comparison metrics
+    for check_name in ("document_presence", "chunk_alignment"):
+        rate_a = _deterministic_pass_rate(a_by_question, check_name)
+        rate_b = _deterministic_pass_rate(b_by_question, check_name)
+        metrics.append(_compare_metric(f"{check_name}_pass_rate", rate_a, rate_b))
 
     # Build expected_answer lookup from question sets (fallback for old results)
     expected_by_question: dict[str, str] = {}
