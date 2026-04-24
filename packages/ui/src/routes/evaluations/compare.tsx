@@ -14,6 +14,9 @@ import {
     Trash2,
     Clock,
     Info,
+    CheckCircle2,
+    XCircle,
+    ChevronDown,
 } from 'lucide-react';
 import { useDocuments } from '../../hooks/documents';
 import type { ComparisonMetric, ComparisonResponse, CoverageGaps, EvalResult, EvalRun } from '../../schemas/evaluation';
@@ -41,8 +44,11 @@ const METRIC_LABELS: Record<string, string> = {
     correctness: 'Correctness',
     compliance_accuracy: 'Compliance Accuracy',
     abstention: 'Abstention Quality',
+    chunk_alignment: 'Chunk Alignment',
     hallucination_rate: 'Hallucination Rate',
     latency_ms: 'Avg Latency',
+    document_presence_pass_rate: 'Document Presence Pass Rate',
+    chunk_alignment_pass_rate: 'Chunk Alignment Pass Rate',
 };
 
 const METRIC_TOOLTIPS: Record<string, string> = {
@@ -54,8 +60,13 @@ const METRIC_TOOLTIPS: Record<string, string> = {
     correctness: 'Is the answer factually consistent with the expected answer?',
     compliance_accuracy: 'Are domain-specific obligations, thresholds, and cited authorities correct and complete?',
     abstention: 'When context is insufficient, does the model say so instead of guessing?',
+    chunk_alignment: 'How many expected chunk references were retrieved for each question.',
     hallucination_rate: 'Percentage of answers containing claims not supported by the retrieved context. Lower is better.',
     latency_ms: 'Average time to generate an answer. Lower is better.',
+    document_presence_pass_rate:
+        'Share of questions where all required documents were represented in retrieved context.',
+    chunk_alignment_pass_rate:
+        'Share of questions where expected chunk alignment passed the deterministic threshold.',
 };
 
 interface ComparisonHistoryEntry {
@@ -104,6 +115,39 @@ function WinnerIcon({ winner }: { winner: string | null | undefined }) {
         return <Minus className="h-4 w-4 text-muted-foreground" />;
     }
     return <Trophy className="h-4 w-4 text-amber-500" />;
+}
+
+function formatEvidenceMode(mode: string): string {
+    if (mode === 'traced_from_synthesis') return 'Traced from synthesis';
+    if (mode === 'grounded_from_manual_answer') return 'Grounded from manual answer';
+    return mode.split('_').join(' ');
+}
+
+function formatCheckName(name: string): string {
+    return name
+        .split('_')
+        .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+        .join(' ');
+}
+
+function getRequiredDocsProgress(result: EvalResult): { found: number | null; total: number } {
+    const total = result.truth?.retrieval_truth.required_documents.length ?? 0;
+    if (total === 0) return { found: null, total: 0 };
+
+    const docPresence = result.deterministic_checks?.find(
+        (check) => check.check_name === 'document_presence',
+    );
+    if (!docPresence) return { found: null, total };
+    if (docPresence.passed) return { found: total, total };
+
+    const missingMatch = docPresence.detail?.match(/Missing\s+(\d+)\/(\d+)/i);
+    if (missingMatch) {
+        const missing = Number(missingMatch[1]);
+        const parsedTotal = Number(missingMatch[2]) || total;
+        return { found: Math.max(0, parsedTotal - missing), total: parsedTotal };
+    }
+
+    return { found: null, total };
 }
 
 function MetricRow({
@@ -190,6 +234,190 @@ function CoverageGapsSummary({ gaps }: { gaps: CoverageGaps | null | undefined }
     );
 }
 
+function InlineVerdictAndFailReasons({ result }: { result: EvalResult | null | undefined }) {
+    if (!result?.verdict) return null;
+
+    const verdictLabel = result.verdict === 'REVIEW_REQUIRED' ? 'Review' : result.verdict;
+    const verdictClass =
+        result.verdict === 'PASS'
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+            : result.verdict === 'FAIL'
+              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300';
+
+    return (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${verdictClass}`}>
+                {verdictLabel}
+            </span>
+            {result.fail_reasons?.map((reason, i) => (
+                <span
+                    key={i}
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        result.verdict === 'FAIL'
+                            ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                    }`}
+                >
+                    {reason}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+function InlineDeterministicChecks({ result }: { result: EvalResult | null | undefined }) {
+    if (!result?.deterministic_checks || result.deterministic_checks.length === 0) return null;
+
+    return (
+        <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
+            {result.deterministic_checks.map((check, i) => (
+                <span key={i} className="inline-flex items-center gap-1">
+                    {check.passed ? (
+                        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                        <XCircle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
+                    )}
+                    <span className="text-muted-foreground">{formatCheckName(check.check_name)}</span>
+                </span>
+            ))}
+        </div>
+    );
+}
+
+function QuestionResultPanel({ result }: { result: EvalResult | null | undefined }) {
+    const [truthExpanded, setTruthExpanded] = useState(false);
+    const [showAllConcepts, setShowAllConcepts] = useState(false);
+
+    if (!result) {
+        return <span className="text-sm text-muted-foreground">Not evaluated</span>;
+    }
+
+    const truth = result.truth;
+    const requiredConcepts = truth?.answer_truth.required_concepts ?? [];
+    const missingConcepts = result.coverage_gaps?.missing ?? [];
+    const defaultConcepts =
+        missingConcepts.length > 0 ? missingConcepts : requiredConcepts.slice(0, 6);
+    const visibleConcepts = showAllConcepts ? requiredConcepts : defaultConcepts;
+    const docsProgress = getRequiredDocsProgress(result);
+
+    return (
+        <>
+            <p className="mb-2 text-sm whitespace-pre-wrap break-words">{result.answer ?? 'No answer'}</p>
+            <div className="flex flex-wrap gap-3 text-xs">
+                <span>
+                    Faith: <strong>{formatScore(result.groundedness_score)}</strong>
+                </span>
+                <span>
+                    Relev: <strong>{formatScore(result.relevancy_score)}</strong>
+                </span>
+                <span>
+                    Compl: <strong>{formatScore(result.completeness_score)}</strong>
+                </span>
+                <span>{formatLatency(result.latency_ms)}</span>
+            </div>
+            {result.is_hallucination && (
+                <span className="mt-1 inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                    Hallucination
+                </span>
+            )}
+            <InlineVerdictAndFailReasons result={result} />
+            <InlineDeterministicChecks result={result} />
+            <CoverageGapsSummary gaps={result.coverage_gaps} />
+
+            {truth && (
+                <div className="mt-2 rounded border bg-muted/30 px-2.5 py-1.5">
+                    <div className="flex flex-wrap gap-1.5 text-[10px]">
+                        <span className="rounded-full border bg-background px-2 py-0.5">
+                            Missing concepts: {missingConcepts.length}/{requiredConcepts.length}
+                        </span>
+                        {docsProgress.total > 0 && (
+                            <span className="rounded-full border bg-background px-2 py-0.5">
+                                {docsProgress.found == null
+                                    ? `Required docs: ${docsProgress.total}`
+                                    : `Required docs found: ${docsProgress.found}/${docsProgress.total}`}
+                            </span>
+                        )}
+                        <span className="rounded-full border bg-background px-2 py-0.5">
+                            Evidence: {formatEvidenceMode(truth.retrieval_truth.evidence_mode)}
+                        </span>
+                    </div>
+                </div>
+            )}
+
+            {truth && (
+                <div className="mt-2 rounded border bg-muted/40">
+                    <button
+                        onClick={() => setTruthExpanded(!truthExpanded)}
+                        className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold"
+                    >
+                        Truth
+                        <ChevronDown
+                            className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${truthExpanded ? 'rotate-180' : ''}`}
+                        />
+                    </button>
+                    {truthExpanded && (
+                        <div className="space-y-2 border-t px-3 pb-2.5 pt-2">
+                            <div>
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                    {showAllConcepts
+                                        ? `Required Concepts (${requiredConcepts.length})`
+                                        : missingConcepts.length > 0
+                                          ? `Missing Concepts (${missingConcepts.length})`
+                                          : `Required Concepts (${visibleConcepts.length}/${requiredConcepts.length})`}
+                                </span>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                    {visibleConcepts.map((concept, i) => (
+                                        <span
+                                            key={i}
+                                            className="inline-flex items-center rounded-full border bg-background px-1.5 py-0.5 text-[10px]"
+                                        >
+                                            {concept}
+                                        </span>
+                                    ))}
+                                </div>
+                                {requiredConcepts.length > visibleConcepts.length && (
+                                    <button
+                                        onClick={() => setShowAllConcepts(!showAllConcepts)}
+                                        className="mt-1 text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+                                    >
+                                        {showAllConcepts
+                                            ? 'Show fewer concepts'
+                                            : missingConcepts.length > 0
+                                              ? 'Show all required concepts'
+                                              : 'Show all concepts'}
+                                    </button>
+                                )}
+                            </div>
+                            {truth.retrieval_truth.required_documents.length > 0 && (
+                                <div>
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                        Required Documents
+                                    </span>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                        {truth.retrieval_truth.required_documents.map((doc, i) => (
+                                            <span
+                                                key={i}
+                                                className="inline-flex items-center rounded-full border bg-background px-1.5 py-0.5 text-[10px]"
+                                            >
+                                                {doc}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                                <span>Evidence: {formatEvidenceMode(truth.retrieval_truth.evidence_mode)}</span>
+                                <span>Truth model: {truth.metadata.generated_by_model}</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
+    );
+}
+
 function QuestionRow({
     question,
     expectedAnswer,
@@ -205,7 +433,6 @@ function QuestionRow({
     modelA: string;
     modelB: string;
 }) {
-
     return (
         <div className="rounded-lg border bg-card">
             <div className="border-b px-4 py-3">
@@ -216,7 +443,7 @@ function QuestionRow({
                     <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         Expected answer
                     </span>
-                    <p className="mt-1 text-sm">{expectedAnswer}</p>
+                    <p className="mt-1 text-sm whitespace-pre-wrap break-words">{expectedAnswer}</p>
                 </div>
             )}
             <div className="grid grid-cols-2 divide-x border-b bg-muted/20">
@@ -229,58 +456,10 @@ function QuestionRow({
             </div>
             <div className="grid grid-cols-2 divide-x">
                 <div className="p-4">
-                    {resultA ? (
-                        <>
-                            <p className="mb-2 text-sm">{resultA.answer ?? 'No answer'}</p>
-                            <div className="flex flex-wrap gap-3 text-xs">
-                                <span>
-                                    Faith: <strong>{formatScore(resultA.groundedness_score)}</strong>
-                                </span>
-                                <span>
-                                    Relev: <strong>{formatScore(resultA.relevancy_score)}</strong>
-                                </span>
-                                <span>
-                                    Compl: <strong>{formatScore(resultA.completeness_score)}</strong>
-                                </span>
-                                <span>{formatLatency(resultA.latency_ms)}</span>
-                            </div>
-                            {resultA.is_hallucination && (
-                                <span className="mt-1 inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                                    Hallucination
-                                </span>
-                            )}
-                            <CoverageGapsSummary gaps={resultA.coverage_gaps} />
-                        </>
-                    ) : (
-                        <span className="text-sm text-muted-foreground">Not evaluated</span>
-                    )}
+                    <QuestionResultPanel result={resultA} />
                 </div>
                 <div className="p-4">
-                    {resultB ? (
-                        <>
-                            <p className="mb-2 text-sm">{resultB.answer ?? 'No answer'}</p>
-                            <div className="flex flex-wrap gap-3 text-xs">
-                                <span>
-                                    Faith: <strong>{formatScore(resultB.groundedness_score)}</strong>
-                                </span>
-                                <span>
-                                    Relev: <strong>{formatScore(resultB.relevancy_score)}</strong>
-                                </span>
-                                <span>
-                                    Compl: <strong>{formatScore(resultB.completeness_score)}</strong>
-                                </span>
-                                <span>{formatLatency(resultB.latency_ms)}</span>
-                            </div>
-                            {resultB.is_hallucination && (
-                                <span className="mt-1 inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                                    Hallucination
-                                </span>
-                            )}
-                            <CoverageGapsSummary gaps={resultB.coverage_gaps} />
-                        </>
-                    ) : (
-                        <span className="text-sm text-muted-foreground">Not evaluated</span>
-                    )}
+                    <QuestionResultPanel result={resultB} />
                 </div>
             </div>
         </div>
@@ -408,9 +587,6 @@ function ExecutiveVerdictCard({ data }: { data: ComparisonResponse }) {
     const isBothDisqualified = decision.reason_codes.includes('BOTH_DISQUALIFIED');
     const isInconclusive = decision.decision_status === 'inconclusive' && !isTie && !isBothDisqualified;
     const hasRisks = decision.risk_flags.length > 0;
-    const hasDisqualifications =
-        Object.values(decision.disqualified).some((reasons) => reasons.length > 0);
-
     // Choose card color based on decision quality
     const bgClass = isBothDisqualified
         ? 'bg-rose-50/80 dark:bg-rose-950/20'

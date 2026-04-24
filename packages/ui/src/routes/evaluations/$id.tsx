@@ -10,9 +10,11 @@ import {
     Loader2,
     AlertTriangle,
     CheckCircle2,
+    XCircle,
+    ChevronDown,
     Clock,
 } from 'lucide-react';
-import type { EvalResult } from '../../schemas/evaluation';
+import type { EvalResult, CoverageGaps } from '../../schemas/evaluation';
 import { formatScore, formatLatency, formatUtcDate } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
 
@@ -68,6 +70,12 @@ function VerdictBadge({ verdict }: { verdict: string }) {
             {label}
         </span>
     );
+}
+
+function formatEvidenceMode(mode: string): string {
+    if (mode === 'traced_from_synthesis') return 'Traced from synthesis';
+    if (mode === 'grounded_from_manual_answer') return 'Grounded from manual answer';
+    return mode.split('_').join(' ');
 }
 
 interface ParsedChunk {
@@ -130,8 +138,74 @@ function ChunkCard({ chunk, index }: { chunk: ParsedChunk; index: number }) {
     );
 }
 
+function CoverageGapsSummary({ gaps }: { gaps: CoverageGaps | null | undefined }) {
+    if (!gaps || gaps.missing.length === 0) return null;
+
+    return (
+        <div className="rounded border border-amber-200 bg-amber-50/50 px-2.5 py-1.5 dark:border-amber-900 dark:bg-amber-950/20">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                Missing ({gaps.missing.length})
+            </span>
+            <p className="mt-0.5 text-xs text-amber-900 dark:text-amber-200">
+                {gaps.missing.join(', ')}
+            </p>
+            {((gaps.retrieval_failures && gaps.retrieval_failures.length > 0) ||
+                (gaps.generation_failures && gaps.generation_failures.length > 0)) && (
+                <div className="mt-1 flex flex-wrap gap-2 text-[10px]">
+                    {gaps.retrieval_failures && gaps.retrieval_failures.length > 0 && (
+                        <span className="text-rose-700 dark:text-rose-400">
+                            Retrieval gaps: {gaps.retrieval_failures.length}
+                        </span>
+                    )}
+                    {gaps.generation_failures && gaps.generation_failures.length > 0 && (
+                        <span className="text-orange-700 dark:text-orange-400">
+                            Generation gaps: {gaps.generation_failures.length}
+                        </span>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function AnswerBlock({ label, text }: { label: string; text: string }) {
+    return (
+        <div>
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {label}
+            </span>
+            <div className="mt-1 rounded-lg bg-muted/40 p-3">
+                <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
+            </div>
+        </div>
+    );
+}
+
 function ResultRow({ result }: { result: EvalResult }) {
     const [expanded, setExpanded] = useState(false);
+    const [truthExpanded, setTruthExpanded] = useState(false);
+    const [showAllConcepts, setShowAllConcepts] = useState(false);
+    const [chunksExpanded, setChunksExpanded] = useState(false);
+
+    const parsedChunks = result.contexts ? parseContextChunks(result.contexts) : [];
+    const visibleChunks = chunksExpanded ? parsedChunks : parsedChunks.slice(0, 2);
+
+    const truth = result.truth;
+    const requiredConcepts = truth?.answer_truth.required_concepts ?? [];
+    const missingConcepts = result.coverage_gaps?.missing ?? [];
+    const defaultConcepts =
+        missingConcepts.length > 0 ? missingConcepts : requiredConcepts.slice(0, 8);
+    const visibleConcepts = showAllConcepts ? requiredConcepts : defaultConcepts;
+
+    const requiredDocs = truth?.retrieval_truth.required_documents ?? [];
+    const retrievedDocs = new Set(
+        parsedChunks
+            .map((chunk) => chunk.document.trim().toLowerCase())
+            .filter((doc) => doc.length > 0),
+    );
+    const requiredDocsFound = requiredDocs.filter((doc) =>
+        retrievedDocs.has(doc.trim().toLowerCase()),
+    ).length;
 
     return (
         <div className="rounded-lg border bg-card">
@@ -168,22 +242,10 @@ function ResultRow({ result }: { result: EvalResult }) {
             {expanded && (
                 <div className="border-t px-4 pb-4 pt-3 space-y-4">
                     {result.expected_answer && (
-                        <div className="rounded-lg bg-muted/40 p-4">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Expected answer
-                            </span>
-                            <p className="mt-1 text-sm">{result.expected_answer}</p>
-                        </div>
+                        <AnswerBlock label="Expected answer" text={result.expected_answer} />
                     )}
 
-                    {result.answer && (
-                        <div className="rounded-lg bg-muted/40 p-4">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Model answer
-                            </span>
-                            <p className="mt-1 text-sm">{result.answer}</p>
-                        </div>
-                    )}
+                    {result.answer && <AnswerBlock label="Model answer" text={result.answer} />}
 
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div>
@@ -224,17 +286,174 @@ function ResultRow({ result }: { result: EvalResult }) {
                         </div>
                     </div>
 
-                    {result.contexts && (
+                    {result.fail_reasons && result.fail_reasons.length > 0 && (
+                        <div>
+                            <h3 className="mb-1.5 text-sm font-semibold">Fail Reasons</h3>
+                            <div className="flex flex-wrap gap-1.5">
+                                {result.fail_reasons.map((reason, i) => (
+                                    <span
+                                        key={i}
+                                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                            result.verdict === 'FAIL'
+                                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+                                                : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                        }`}
+                                    >
+                                        {reason}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {result.deterministic_checks && result.deterministic_checks.length > 0 && (
+                        <div>
+                            <h3 className="mb-1.5 text-sm font-semibold">Deterministic Checks</h3>
+                            <div className="space-y-1">
+                                {result.deterministic_checks.map((check, i) => (
+                                    <div key={i} className="flex items-start gap-2 text-sm">
+                                        {check.passed ? (
+                                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                                        ) : (
+                                            <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                                        )}
+                                        <div>
+                                            <span className="font-medium">{check.check_name}</span>
+                                            {check.detail && (
+                                                <span className="ml-1 text-muted-foreground">
+                                                    &mdash; {check.detail}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <CoverageGapsSummary gaps={result.coverage_gaps} />
+
+                    {truth && (
+                        <div className="rounded-lg border bg-muted/30 p-3">
+                            <div className="flex flex-wrap gap-2 text-xs">
+                                <span className="rounded-full border bg-background px-2 py-0.5">
+                                    Missing concepts: {missingConcepts.length}/{requiredConcepts.length}
+                                </span>
+                                {requiredDocs.length > 0 && (
+                                    <span className="rounded-full border bg-background px-2 py-0.5">
+                                        Required docs found: {requiredDocsFound}/{requiredDocs.length}
+                                    </span>
+                                )}
+                                <span className="rounded-full border bg-background px-2 py-0.5">
+                                    Evidence: {formatEvidenceMode(truth.retrieval_truth.evidence_mode)}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
+                    {truth && (
+                        <div className="rounded-lg border bg-muted/40">
+                            <button
+                                onClick={() => setTruthExpanded(!truthExpanded)}
+                                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm font-semibold"
+                            >
+                                Truth
+                                <ChevronDown
+                                    className={`h-4 w-4 text-muted-foreground transition-transform ${truthExpanded ? 'rotate-180' : ''}`}
+                                />
+                            </button>
+                            {truthExpanded && (
+                                <div className="space-y-3 border-t px-4 pb-3 pt-2">
+                                    <div>
+                                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                            {showAllConcepts
+                                                ? `Required Concepts (${requiredConcepts.length})`
+                                                : missingConcepts.length > 0
+                                                  ? `Missing Concepts (${missingConcepts.length})`
+                                                  : `Required Concepts (${visibleConcepts.length}/${requiredConcepts.length})`}
+                                        </span>
+                                        <div className="mt-1 flex flex-wrap gap-1.5">
+                                            {visibleConcepts.map((concept, i) => (
+                                                <span
+                                                    key={i}
+                                                    className="inline-flex items-center rounded-full border bg-background px-2 py-0.5 text-xs"
+                                                >
+                                                    {concept}
+                                                </span>
+                                            ))}
+                                        </div>
+                                        {requiredConcepts.length > visibleConcepts.length && (
+                                            <button
+                                                onClick={() => setShowAllConcepts(!showAllConcepts)}
+                                                className="mt-2 text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                            >
+                                                {showAllConcepts
+                                                    ? 'Show fewer concepts'
+                                                    : missingConcepts.length > 0
+                                                      ? 'Show all required concepts'
+                                                      : 'Show all concepts'}
+                                            </button>
+                                        )}
+                                        {truth.answer_truth.abstention_expected && (
+                                            <span className="mt-1 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                                Abstention expected
+                                            </span>
+                                        )}
+                                    </div>
+                                    {truth.retrieval_truth.required_documents.length > 0 && (
+                                        <div>
+                                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                                Required Documents
+                                            </span>
+                                            <div className="mt-1 flex flex-wrap gap-1.5">
+                                                {truth.retrieval_truth.required_documents.map((doc, i) => (
+                                                    <span
+                                                        key={i}
+                                                        className="inline-flex items-center rounded-full border bg-background px-2 py-0.5 text-xs"
+                                                    >
+                                                        {doc}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                                        <span>
+                                            Evidence:{' '}
+                                            {formatEvidenceMode(
+                                                truth.retrieval_truth.evidence_mode,
+                                            )}
+                                        </span>
+                                        <span>
+                                            Truth model: {truth.metadata.generated_by_model}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {parsedChunks.length > 0 && (
                         <div>
                             <h3 className="mb-1 text-sm font-semibold">Retrieved chunks</h3>
                             <p className="mb-3 text-xs text-muted-foreground">
                                 Document, page, section, and snippet for each retrieved chunk.
                             </p>
                             <div className="space-y-3">
-                                {parseContextChunks(result.contexts).map((chunk, i) => (
+                                {visibleChunks.map((chunk, i) => (
                                     <ChunkCard key={i} chunk={chunk} index={i} />
                                 ))}
                             </div>
+                            {parsedChunks.length > 2 && (
+                                <button
+                                    onClick={() => setChunksExpanded(!chunksExpanded)}
+                                    className="mt-2 text-xs text-muted-foreground underline-offset-2 hover:underline"
+                                >
+                                    {chunksExpanded
+                                        ? 'Show fewer chunks'
+                                        : `Show all ${parsedChunks.length} chunks`}
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>
@@ -335,52 +554,57 @@ function EvalRunDetailPage() {
                 )}
 
                 {/* Summary metrics */}
-                <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <MetricCard
-                        label="Faithfulness"
-                        value={formatScore(run.avg_groundedness)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Relevancy"
-                        value={formatScore(run.avg_relevancy)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Hallucination Rate"
-                        value={
-                            run.hallucination_rate != null
-                                ? (run.hallucination_rate * 100).toFixed(0) + '%'
-                                : '--'
-                        }
-                        icon={<AlertTriangle className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Avg Latency"
-                        value={formatLatency(run.avg_latency_ms)}
-                        icon={<Clock className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Completeness"
-                        value={formatScore(run.avg_completeness)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Correctness"
-                        value={formatScore(run.avg_correctness)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Compliance Accuracy"
-                        value={formatScore(run.avg_compliance_accuracy)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                    <MetricCard
-                        label="Abstention Quality"
-                        value={formatScore(run.avg_abstention)}
-                        icon={<CheckCircle2 className="h-3.5 w-3.5" />}
-                    />
-                </div>
+                {run.total_questions > 1 && (
+                    <div className="mb-6">
+                        <h2 className="mb-2 text-sm font-semibold text-muted-foreground">Run averages</h2>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                            <MetricCard
+                                label="Faithfulness"
+                                value={formatScore(run.avg_groundedness)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Relevancy"
+                                value={formatScore(run.avg_relevancy)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Hallucination Rate"
+                                value={
+                                    run.hallucination_rate != null
+                                        ? (run.hallucination_rate * 100).toFixed(0) + '%'
+                                        : '--'
+                                }
+                                icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Avg Latency"
+                                value={formatLatency(run.avg_latency_ms)}
+                                icon={<Clock className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Completeness"
+                                value={formatScore(run.avg_completeness)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Correctness"
+                                value={formatScore(run.avg_correctness)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Compliance Accuracy"
+                                value={formatScore(run.avg_compliance_accuracy)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                            <MetricCard
+                                label="Abstention Quality"
+                                value={formatScore(run.avg_abstention)}
+                                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                            />
+                        </div>
+                    </div>
+                )}
 
                 {/* Rerun */}
                 {run.status === 'completed' && (
