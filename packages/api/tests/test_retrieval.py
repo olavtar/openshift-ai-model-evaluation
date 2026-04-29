@@ -168,6 +168,11 @@ def test_retrieve_chunks_hybrid_path(mock_session):
             new_callable=AsyncMock,
             return_value=keyword_results,
         ),
+        patch(
+            "src.services.retrieval._count_ready_documents",
+            new_callable=AsyncMock,
+            return_value=3,
+        ),
     ):
         result = asyncio.run(retrieve_chunks("test query", mock_session, top_k=5))
 
@@ -296,6 +301,11 @@ def test_retrieve_chunks_hybrid_with_dedup(mock_session):
             "src.services.retrieval._keyword_search",
             new_callable=AsyncMock,
             return_value=keyword_results,
+        ),
+        patch(
+            "src.services.retrieval._count_ready_documents",
+            new_callable=AsyncMock,
+            return_value=3,
         ),
     ):
         result = asyncio.run(

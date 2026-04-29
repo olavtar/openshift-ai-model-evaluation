@@ -24,6 +24,9 @@ class QuestionSetCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200)
     questions: list[str | QuestionSetItem] = Field(..., min_length=1, max_length=100)
+    profile_id: str | None = Field(
+        default=None, description="Evaluation profile to use for truth generation retrieval config."
+    )
 
 
 class QuestionSetResponse(BaseModel):

@@ -14,8 +14,15 @@ export function useQuestionSets() {
 export function useCreateQuestionSet() {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ name, questions }: { name: string; questions: QuestionSetItem[] }) =>
-            createQuestionSet(name, questions),
+        mutationFn: ({
+            name,
+            questions,
+            profileId,
+        }: {
+            name: string;
+            questions: QuestionSetItem[];
+            profileId?: string;
+        }) => createQuestionSet(name, questions, profileId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['question-sets'] });
         },

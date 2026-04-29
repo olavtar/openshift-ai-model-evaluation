@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
-from ..services.profiles import RetrievalConfig
+from ..services.profiles import RetrievalConfig, load_profile
 from ..services.truth_generation import generate_truth_from_manual_answer
 
 logger = logging.getLogger(__name__)
@@ -49,19 +49,24 @@ async def create_question_set(
             normalized.append(q.model_dump(exclude_none=True))
 
     # Generate truth for questions with expected answers but no truth.
-    # Use RetrievalConfig defaults (top_k=10) instead of retrieval.py
-    # hardcoded TOP_K=5, which would produce an artificially narrow truth.
+    # Use profile retrieval config when provided, otherwise RetrievalConfig defaults.
     judge_model = settings.resolved_judge_model_name
     if judge_model:
-        default_retrieval = RetrievalConfig()
+        retrieval_cfg = RetrievalConfig()
+        if request.profile_id:
+            try:
+                prof = load_profile(request.profile_id)
+                retrieval_cfg = prof.retrieval
+            except (FileNotFoundError, ValueError):
+                pass
         truth_retrieval_kwargs = {
-            "top_k": default_retrieval.top_k,
-            "max_per_doc": default_retrieval.max_chunks_per_document,
-            "rerank_depth": default_retrieval.rerank_depth,
-            "diversity_min": default_retrieval.document_diversity_min,
-            "keyword_enabled": default_retrieval.keyword_search_enabled,
-            "dedup_threshold": default_retrieval.dedup_threshold,
-            "diversity_relevance_threshold": default_retrieval.diversity_relevance_threshold,
+            "top_k": retrieval_cfg.top_k,
+            "max_per_doc": retrieval_cfg.max_chunks_per_document,
+            "rerank_depth": retrieval_cfg.rerank_depth,
+            "diversity_min": retrieval_cfg.document_diversity_min,
+            "keyword_enabled": retrieval_cfg.keyword_search_enabled,
+            "dedup_threshold": retrieval_cfg.dedup_threshold,
+            "diversity_relevance_threshold": retrieval_cfg.diversity_relevance_threshold,
         }
         for q in normalized:
             if q.get("expected_answer") and not q.get("truth"):

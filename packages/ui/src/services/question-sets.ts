@@ -10,11 +10,14 @@ import { z } from 'zod';
 export async function createQuestionSet(
     name: string,
     questions: QuestionSetItem[],
+    profileId?: string,
 ): Promise<QuestionSet> {
+    const body: Record<string, unknown> = { name, questions };
+    if (profileId) body.profile_id = profileId;
     const response = await fetch('/api/question-sets/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, questions }),
+        body: JSON.stringify(body),
     });
     if (!response.ok) throw new Error('Failed to create question set');
     const data = await response.json();
