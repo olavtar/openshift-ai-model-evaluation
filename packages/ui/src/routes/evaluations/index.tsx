@@ -166,6 +166,7 @@ function NewEvalForm({
     const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
     const [saveSetName, setSaveSetName] = useState('');
     const [showSaveSet, setShowSaveSet] = useState(false);
+    const [showSetList, setShowSetList] = useState(false);
 
     useEffect(() => {
         if (profiles && profiles.length > 0 && !selectedProfile) {
@@ -300,32 +301,56 @@ function NewEvalForm({
                             </button>
                         )}
                         {questionSets && questionSets.length > 0 && (
-                            <select
-                                onChange={(e) => {
-                                    const set = questionSets.find(
-                                        (s) => s.id === Number(e.target.value),
-                                    );
-                                    if (set) {
-                                        setQuestions(set.questions.map((q) => ({
-                                            question: q.question,
-                                            expected_answer: q.expected_answer,
-                                        })));
-                                        setLoadedSetId(set.id);
-                                    }
-                                    e.target.value = '';
-                                }}
-                                className="rounded-lg border bg-background px-2 py-1 text-xs"
-                                defaultValue=""
-                            >
-                                <option value="" disabled>
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowSetList((v) => !v)}
+                                    className="rounded-lg border bg-background px-2 py-1 text-xs"
+                                >
                                     Load Question Set
-                                </option>
-                                {questionSets.map((s) => (
-                                    <option key={s.id} value={s.id}>
-                                        {s.name} ({s.questions.length}q)
-                                    </option>
-                                ))}
-                            </select>
+                                </button>
+                                {showSetList && (
+                                    <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-popover p-1 shadow-md">
+                                        {questionSets.map((s) => (
+                                            <div
+                                                key={s.id}
+                                                className="flex items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-accent"
+                                            >
+                                                <button
+                                                    className="flex-1 text-left"
+                                                    onClick={() => {
+                                                        setQuestions(s.questions.map((q) => ({
+                                                            question: q.question,
+                                                            expected_answer: q.expected_answer,
+                                                        })));
+                                                        setLoadedSetId(s.id);
+                                                        setShowSetList(false);
+                                                    }}
+                                                >
+                                                    {s.name} ({s.questions.length}q)
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (window.confirm(`Delete question set "${s.name}"?`)) {
+                                                            deleteSetMutation.mutate(s.id, {
+                                                                onSuccess: () => {
+                                                                    if (loadedSetId === s.id) {
+                                                                        setLoadedSetId(undefined);
+                                                                    }
+                                                                },
+                                                            });
+                                                        }
+                                                    }}
+                                                    className="ml-2 rounded p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                                    title={`Delete "${s.name}"`}
+                                                >
+                                                    <Trash2 className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -411,7 +436,7 @@ function NewEvalForm({
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && saveSetName.trim()) {
                                     saveSetMutation.mutate(
-                                        { name: saveSetName.trim(), questions },
+                                        { name: saveSetName.trim(), questions, profileId: selectedProfile || undefined },
                                         {
                                             onSuccess: (data) => {
                                                 setLoadedSetId(data.id);
@@ -430,7 +455,7 @@ function NewEvalForm({
                             onClick={() => {
                                 if (!saveSetName.trim()) return;
                                 saveSetMutation.mutate(
-                                    { name: saveSetName.trim(), questions },
+                                    { name: saveSetName.trim(), questions, profileId: selectedProfile || undefined },
                                     {
                                         onSuccess: (data) => {
                                             setLoadedSetId(data.id);

@@ -58,7 +58,15 @@ async def retrieve_chunks(
     result = await generate_embeddings([query])
 
     if result.vectors:
-        vector_results = await _vector_search(result.vectors[0], session, rerank_depth)
+        # Widen the candidate pool so large documents cannot starve the
+        # diversity filter.  When diversity_min > 1, pull enough candidates
+        # that even a corpus dominated by one giant document still surfaces
+        # chunks from smaller ones.
+        search_depth = rerank_depth
+        if diversity_min > 1:
+            doc_count = await _count_ready_documents(session)
+            search_depth = max(rerank_depth, doc_count * rerank_depth)
+        vector_results = await _vector_search(result.vectors[0], session, search_depth)
     else:
         logger.info("No query embedding available -- falling back to recent chunks")
         if result.error:
@@ -68,7 +76,7 @@ async def retrieve_chunks(
     # Keyword search (graceful degradation: returns [] if not supported)
     keyword_results = []
     if keyword_enabled:
-        keyword_results = await _keyword_search(query, session, rerank_depth)
+        keyword_results = await _keyword_search(query, session, search_depth)
 
     # Merge via RRF
     if keyword_results:
@@ -106,6 +114,15 @@ async def retrieve_chunks(
     )
 
     return final
+
+
+async def _count_ready_documents(session: AsyncSession) -> int:
+    """Count documents with status 'ready' that haven't been deleted."""
+    stmt = select(func.count(Document.id)).where(
+        Document.status == "ready", Document.deleted_at.is_(None)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
 
 
 async def _vector_search(
