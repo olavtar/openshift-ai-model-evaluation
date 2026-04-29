@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
 from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
+from ..services.profiles import RetrievalConfig
 from ..services.truth_generation import generate_truth_from_manual_answer
 
 logger = logging.getLogger(__name__)
@@ -47,14 +48,29 @@ async def create_question_set(
         else:
             normalized.append(q.model_dump(exclude_none=True))
 
-    # Generate truth for questions with expected answers but no truth
+    # Generate truth for questions with expected answers but no truth.
+    # Use RetrievalConfig defaults (top_k=10) instead of retrieval.py
+    # hardcoded TOP_K=5, which would produce an artificially narrow truth.
     judge_model = settings.resolved_judge_model_name
     if judge_model:
+        default_retrieval = RetrievalConfig()
+        truth_retrieval_kwargs = {
+            "top_k": default_retrieval.top_k,
+            "max_per_doc": default_retrieval.max_chunks_per_document,
+            "rerank_depth": default_retrieval.rerank_depth,
+            "diversity_min": default_retrieval.document_diversity_min,
+            "keyword_enabled": default_retrieval.keyword_search_enabled,
+            "dedup_threshold": default_retrieval.dedup_threshold,
+            "diversity_relevance_threshold": default_retrieval.diversity_relevance_threshold,
+        }
         for q in normalized:
             if q.get("expected_answer") and not q.get("truth"):
                 try:
                     truth = await generate_truth_from_manual_answer(
-                        q["expected_answer"], session, judge_model
+                        q["expected_answer"],
+                        session,
+                        judge_model,
+                        retrieval_kwargs=truth_retrieval_kwargs,
                     )
                     q["truth"] = truth.model_dump(mode="json")
                 except Exception as e:

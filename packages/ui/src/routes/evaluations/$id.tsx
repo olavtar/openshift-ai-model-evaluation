@@ -17,6 +17,31 @@ import {
 import type { EvalResult, CoverageGaps } from '../../schemas/evaluation';
 import { formatScore, formatLatency, formatUtcDate } from '../../lib/format';
 import { EVAL_STATUS_COLORS } from '../../lib/status-colors';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '../../components/atoms/tooltip/tooltip';
+
+const METRIC_DESCRIPTIONS: Record<string, string> = {
+    Faithfulness:
+        'Are all claims in the answer grounded in the retrieved context? Below 70% is flagged as hallucination.',
+    Relevancy: 'Does the answer directly address the question that was asked?',
+    'Context Precision':
+        'Do the retrieved chunks actually contain the information needed to produce the expected answer?',
+    'Context Relevancy': 'Are the retrieved chunks relevant to the question?',
+    Completeness:
+        'Does the answer cover all key points from the expected answer? Requires expected answer.',
+    Correctness:
+        'Are the claims in the answer consistent with the expected answer, without contradictions? Requires expected answer.',
+    'Compliance Accuracy':
+        'Are regulatory obligations, thresholds, disclosures, and authorities correctly stated? Requires expected answer.',
+    'Abstention Quality':
+        'Does the answer appropriately acknowledge when the context is insufficient, rather than fabricating information?',
+    'Hallucination Rate': 'Percentage of questions where faithfulness scored below 70%.',
+    'Avg Latency': 'Average time to generate an answer across all questions in this run.',
+};
 
 export const Route = createFileRoute('/evaluations/$id')({
     component: EvalRunDetailPage,
@@ -34,6 +59,23 @@ function ScoreColor({ score }: { score: number | null | undefined }) {
     return <span className={`font-medium ${color}`}>{pct.toFixed(0)}%</span>;
 }
 
+function MetricLabel({ label }: { label: string }) {
+    const description = METRIC_DESCRIPTIONS[label];
+    if (!description) return <span>{label}</span>;
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+                    {label} *
+                </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+                <p>{description}</p>
+            </TooltipContent>
+        </Tooltip>
+    );
+}
+
 function MetricCard({
     label,
     value,
@@ -47,7 +89,7 @@ function MetricCard({
         <div className="rounded-lg border bg-card p-4">
             <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
                 {icon}
-                {label}
+                <MetricLabel label={label} />
             </div>
             <div className="text-2xl font-bold">{value}</div>
         </div>
@@ -249,38 +291,50 @@ function ResultRow({ result }: { result: EvalResult }) {
 
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                         <div>
-                            <div className="text-xs text-muted-foreground">Faithfulness</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Faithfulness" />
+                            </div>
                             <ScoreColor score={result.groundedness_score} />
                         </div>
                         <div>
-                            <div className="text-xs text-muted-foreground">Relevancy</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Relevancy" />
+                            </div>
                             <ScoreColor score={result.relevancy_score} />
                         </div>
                         <div>
-                            <div className="text-xs text-muted-foreground">Context Precision</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Context Precision" />
+                            </div>
                             <ScoreColor score={result.context_precision_score} />
                         </div>
                         <div>
-                            <div className="text-xs text-muted-foreground">Context Relevancy</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Context Relevancy" />
+                            </div>
                             <ScoreColor score={result.context_relevancy_score} />
                         </div>
                         <div>
-                            <div className="text-xs text-muted-foreground">Completeness</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Completeness" />
+                            </div>
                             <ScoreColor score={result.completeness_score} />
                         </div>
                         <div>
-                            <div className="text-xs text-muted-foreground">Correctness</div>
+                            <div className="text-xs text-muted-foreground">
+                                <MetricLabel label="Correctness" />
+                            </div>
                             <ScoreColor score={result.correctness_score} />
                         </div>
                         <div>
                             <div className="text-xs text-muted-foreground">
-                                Compliance Accuracy
+                                <MetricLabel label="Compliance Accuracy" />
                             </div>
                             <ScoreColor score={result.compliance_accuracy_score} />
                         </div>
                         <div>
                             <div className="text-xs text-muted-foreground">
-                                Abstention Quality
+                                <MetricLabel label="Abstention Quality" />
                             </div>
                             <ScoreColor score={result.abstention_score} />
                         </div>
@@ -502,6 +556,7 @@ function EvalRunDetailPage() {
     const isRunning = run.status === 'pending' || run.status === 'running';
 
     return (
+        <TooltipProvider delayDuration={200}>
         <div className="p-4 sm:p-6 lg:p-8">
             <div className="mx-auto max-w-5xl">
                 <button
@@ -664,5 +719,6 @@ function EvalRunDetailPage() {
                 </div>
             </div>
         </div>
+        </TooltipProvider>
     );
 }
