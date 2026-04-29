@@ -125,7 +125,18 @@ async def ground_answer_to_corpus(
     Returns:
         RetrievalTruth with corpus-grounded evidence.
     """
-    kwargs = retrieval_kwargs or {}
+    # Filter to keys accepted by retrieve_chunks; callers may pass
+    # profile dicts that include evaluation-only keys.
+    _accepted = {
+        "top_k",
+        "max_per_doc",
+        "rerank_depth",
+        "diversity_min",
+        "keyword_enabled",
+        "dedup_threshold",
+        "diversity_relevance_threshold",
+    }
+    kwargs = {k: v for k, v in (retrieval_kwargs or {}).items() if k in _accepted}
     chunks = await retrieve_chunks(
         query=expected_answer,
         session=session,

@@ -1,6 +1,7 @@
 # This project was developed with assistance from AI tools.
 """Generation service -- calls the LLM via the MaaS /v1/chat/completions endpoint."""
 
+import asyncio
 import logging
 import re
 
@@ -11,7 +12,12 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 GENERATION_TIMEOUT = 120.0  # seconds
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = 2.0  # seconds, doubles each attempt
 _DEBUG_ERROR_SNIPPET_LEN = 500
+_DEFAULT_MAX_TOKENS = 2048
+_MIN_RETRY_MAX_TOKENS = 512
+_MIN_RETRY_CHUNKS = 4
 
 
 def _summarize_upstream_error(response: httpx.Response) -> str:
@@ -73,6 +79,38 @@ def _build_context_block(chunks: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_generation_payload(
+    *,
+    question: str,
+    chunks: list[dict],
+    model_name: str,
+    system_prompt: str | None,
+    attempt: int,
+) -> tuple[dict, int, int]:
+    """Build request payload, shrinking context and max_tokens on retries."""
+    if attempt <= 0:
+        prompt_chunks = chunks
+    else:
+        # Keep the highest-ranked chunks and reduce prompt size after each transport failure.
+        drop_per_retry = max(1, len(chunks) // 4)
+        keep = max(_MIN_RETRY_CHUNKS, len(chunks) - (drop_per_retry * attempt))
+        prompt_chunks = chunks[:keep]
+
+    context = _build_context_block(prompt_chunks)
+    user_message = f"Context:\n{context}\n\nQuestion: {question}"
+    max_tokens = max(_MIN_RETRY_MAX_TOKENS, _DEFAULT_MAX_TOKENS // (2**attempt))
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0.0,
+        "max_tokens": max_tokens,
+    }
+    return payload, len(prompt_chunks), max_tokens
+
+
 async def generate_answer(
     question: str,
     chunks: list[dict],
@@ -93,67 +131,100 @@ async def generate_answer(
     """
     model_cfg = settings.get_model_config(model_name)
     if not model_cfg["token"]:
+        msg = f"No API token configured for model {model_name}."
         return {
-            "answer": f"No API token configured for model {model_name}.",
+            "answer": msg,
             "model": model_name,
             "usage": None,
+            "error": msg,
         }
-
-    context = _build_context_block(chunks)
-    user_message = f"Context:\n{context}\n\nQuestion: {question}"
 
     url = f"{model_cfg['endpoint']}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {model_cfg['token']}",
         "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ],
-        "temperature": 0.0,
-        "max_tokens": 2048,
+        "Connection": "close",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-
-        data = response.json()
-        answer = data["choices"][0]["message"]["content"]
-        # Strip <think>...</think> reasoning blocks that some models emit
-        answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
-        usage = data.get("usage")
-
-        return {
-            "answer": answer,
-            "model": model_name,
-            "usage": usage,
-        }
-
-    except httpx.HTTPStatusError as e:
-        detail = _summarize_upstream_error(e.response)
-        logger.error(
-            "Generation API HTTP %s for model %r: %s",
-            e.response.status_code,
-            model_name,
-            detail or "(empty body)",
+    last_error: Exception | None = None
+    for attempt in range(_MAX_RETRIES):
+        payload, chunk_count, max_tokens = _build_generation_payload(
+            question=question,
+            chunks=chunks,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            attempt=attempt,
         )
-        msg = f"Model {model_name} returned an error: {e.response.status_code}"
-        if settings.DEBUG and detail:
-            msg = f"{msg}. {detail}"
-        return {
-            "answer": msg,
-            "model": model_name,
-            "usage": None,
-        }
-    except Exception as e:
-        logger.error("Generation request failed: %s", e)
-        return {
-            "answer": f"Failed to generate answer: {e}",
-            "model": model_name,
-            "usage": None,
-        }
+        if attempt > 0:
+            logger.info(
+                "Generation retry %d/%d for model %r with %d chunks and max_tokens=%d",
+                attempt + 1,
+                _MAX_RETRIES,
+                model_name,
+                chunk_count,
+                max_tokens,
+            )
+        try:
+            async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
+            # Strip <think>...</think> reasoning blocks that some models emit
+            answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
+            usage = data.get("usage")
+
+            return {
+                "answer": answer,
+                "model": model_name,
+                "usage": usage,
+                "error": None,
+            }
+
+        except httpx.HTTPStatusError as e:
+            detail = _summarize_upstream_error(e.response)
+            logger.error(
+                "Generation API HTTP %s for model %r: %s",
+                e.response.status_code,
+                model_name,
+                detail or "(empty body)",
+            )
+            msg = f"Model {model_name} returned an error: {e.response.status_code}"
+            if settings.DEBUG and detail:
+                msg = f"{msg}. {detail}"
+            return {
+                "answer": msg,
+                "model": model_name,
+                "usage": None,
+                "error": msg,
+            }
+        except httpx.TransportError as e:
+            last_error = e
+            wait = _RETRY_BACKOFF * (2**attempt)
+            logger.warning(
+                "Generation attempt %d/%d failed (transport: %s)",
+                attempt + 1,
+                _MAX_RETRIES,
+                e,
+            )
+            if attempt < _MAX_RETRIES - 1:
+                logger.info("Retrying generation in %.1fs", wait)
+                await asyncio.sleep(wait)
+        except Exception as e:
+            logger.error("Generation request failed: %s", e)
+            return {
+                "answer": f"Failed to generate answer: {e}",
+                "model": model_name,
+                "usage": None,
+                "error": str(e),
+            }
+
+    error_msg = f"Failed to generate answer after {_MAX_RETRIES} retries: {last_error}"
+    logger.error("Generation failed after %d retries: %s", _MAX_RETRIES, last_error)
+    return {
+        "answer": error_msg,
+        "model": model_name,
+        "usage": None,
+        "error": error_msg,
+    }

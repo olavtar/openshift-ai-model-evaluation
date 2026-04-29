@@ -94,6 +94,22 @@ _RETRIEVE_CHUNKS_KWARGS = frozenset(
 )
 
 
+def _build_retrieval_kwargs(profile) -> dict:
+    """Map profile retrieval config to retrieve_chunks parameter names."""
+    r = profile.retrieval
+    return {
+        "top_k": r.top_k,
+        "max_per_doc": r.max_chunks_per_document,
+        "rerank_depth": r.rerank_depth,
+        "diversity_min": r.document_diversity_min,
+        "keyword_enabled": r.keyword_search_enabled,
+        "dedup_threshold": r.dedup_threshold,
+        "diversity_relevance_threshold": r.diversity_relevance_threshold,
+        "ensure_sub_query_representation": r.ensure_sub_query_representation,
+        "sub_query_swap_score_multiplier": r.sub_query_swap_score_multiplier,
+    }
+
+
 def _retrieve_chunks_kwargs(retrieval_kwargs: dict) -> dict:
     """Strip evaluation-only keys before calling retrieve_chunks."""
     return {k: v for k, v in retrieval_kwargs.items() if k in _RETRIEVE_CHUNKS_KWARGS}
@@ -169,18 +185,7 @@ async def _process_question(
             # Build retrieval kwargs from profile settings
             retrieval_kwargs: dict = {}
             if profile and hasattr(profile, "retrieval"):
-                r = profile.retrieval
-                retrieval_kwargs = {
-                    "top_k": r.top_k,
-                    "max_per_doc": r.max_chunks_per_document,
-                    "rerank_depth": r.rerank_depth,
-                    "diversity_min": r.document_diversity_min,
-                    "keyword_enabled": r.keyword_search_enabled,
-                    "dedup_threshold": r.dedup_threshold,
-                    "diversity_relevance_threshold": r.diversity_relevance_threshold,
-                    "ensure_sub_query_representation": r.ensure_sub_query_representation,
-                    "sub_query_swap_score_multiplier": r.sub_query_swap_score_multiplier,
-                }
+                retrieval_kwargs = _build_retrieval_kwargs(profile)
 
             # Decompose broad questions into targeted sub-queries for
             # multi-document retrieval, then merge results across sub-queries
@@ -321,6 +326,11 @@ async def _process_question(
                 model_name=model_name,
                 system_prompt=profile_prompt,
             )
+            if gen_result.get("error"):
+                result.latency_ms = (time.time() - start) * 1000
+                result.error = gen_result["error"]
+                return result
+
             result.latency_ms = (time.time() - start) * 1000
             result.answer = gen_result["answer"]
             result.tokens = (
@@ -614,6 +624,19 @@ async def create_eval_run(
         else:
             normalized.append(q)
 
+    # Load profile BEFORE truth generation so retrieval kwargs match evaluation
+    retrieval_cfg = None
+    profile_version = None
+    truth_retrieval_kwargs = None
+    if request.profile_id:
+        try:
+            prof = load_profile(request.profile_id)
+            retrieval_cfg = prof.retrieval.model_dump()
+            profile_version = prof.version
+            truth_retrieval_kwargs = _build_retrieval_kwargs(prof)
+        except (FileNotFoundError, ValueError):
+            pass
+
     # Generate truth for questions with expected answers but no truth
     judge_model = settings.resolved_judge_model_name
     if judge_model:
@@ -621,21 +644,13 @@ async def create_eval_run(
             if q.expected_answer and not q.truth:
                 try:
                     q.truth = await generate_truth_from_manual_answer(
-                        q.expected_answer, session, judge_model
+                        q.expected_answer,
+                        session,
+                        judge_model,
+                        retrieval_kwargs=truth_retrieval_kwargs,
                     )
                 except Exception as e:
                     logger.warning("Truth generation failed for inline question: %s", e)
-
-    # Snapshot run metadata for reproducibility (before background task starts)
-    retrieval_cfg = None
-    profile_version = None
-    if request.profile_id:
-        try:
-            prof = load_profile(request.profile_id)
-            retrieval_cfg = prof.retrieval.model_dump()
-            profile_version = prof.version
-        except (FileNotFoundError, ValueError):
-            pass
 
     corpus_snapshot = await _build_corpus_snapshot(session)
 
