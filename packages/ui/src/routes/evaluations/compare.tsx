@@ -14,6 +14,7 @@ import {
     Trash2,
     Clock,
     Info,
+    AlertTriangle,
     CheckCircle2,
     XCircle,
     ChevronDown,
@@ -130,24 +131,29 @@ function formatCheckName(name: string): string {
         .join(' ');
 }
 
-function getRequiredDocsProgress(result: EvalResult): { found: number | null; total: number } {
+function getRequiredDocsProgress(result: EvalResult): {
+    found: number | null;
+    total: number;
+    supportingTotal: number;
+} {
     const total = result.truth?.retrieval_truth.required_documents.length ?? 0;
-    if (total === 0) return { found: null, total: 0 };
+    const supportingTotal = result.truth?.retrieval_truth.supporting_documents?.length ?? 0;
+    if (total === 0) return { found: null, total: 0, supportingTotal };
 
     const docPresence = result.deterministic_checks?.find(
         (check) => check.check_name === 'document_presence',
     );
-    if (!docPresence) return { found: null, total };
-    if (docPresence.passed) return { found: total, total };
+    if (!docPresence) return { found: null, total, supportingTotal };
+    if (docPresence.passed) return { found: total, total, supportingTotal };
 
     const missingMatch = docPresence.detail?.match(/Missing\s+(\d+)\/(\d+)/i);
     if (missingMatch) {
         const missing = Number(missingMatch[1]);
         const parsedTotal = Number(missingMatch[2]) || total;
-        return { found: Math.max(0, parsedTotal - missing), total: parsedTotal };
+        return { found: Math.max(0, parsedTotal - missing), total: parsedTotal, supportingTotal };
     }
 
-    return { found: null, total };
+    return { found: null, total, supportingTotal };
 }
 
 function MetricRow({
@@ -271,16 +277,28 @@ function InlineDeterministicChecks({ result }: { result: EvalResult | null | und
 
     return (
         <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
-            {result.deterministic_checks.map((check, i) => (
-                <span key={i} className="inline-flex items-center gap-1">
-                    {check.passed ? (
-                        <CheckCircle2 className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                    ) : (
-                        <XCircle className="h-3 w-3 text-rose-600 dark:text-rose-400" />
-                    )}
-                    <span className="text-muted-foreground">{formatCheckName(check.check_name)}</span>
-                </span>
-            ))}
+            {result.deterministic_checks.map((check, i) => {
+                const hasSupportingWarning =
+                    check.passed && check.detail?.toLowerCase().includes('supporting documents');
+                const Icon = check.passed
+                    ? hasSupportingWarning
+                        ? AlertTriangle
+                        : CheckCircle2
+                    : XCircle;
+                const iconClass = check.passed
+                    ? hasSupportingWarning
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400';
+                return (
+                    <span key={i} className="inline-flex items-center gap-1">
+                        <Icon className={`h-3 w-3 ${iconClass}`} />
+                        <span className="text-muted-foreground">
+                            {formatCheckName(check.check_name)}
+                        </span>
+                    </span>
+                );
+            })}
         </div>
     );
 }
@@ -336,6 +354,11 @@ function QuestionResultPanel({ result }: { result: EvalResult | null | undefined
                                 {docsProgress.found == null
                                     ? `Required docs: ${docsProgress.total}`
                                     : `Required docs found: ${docsProgress.found}/${docsProgress.total}`}
+                            </span>
+                        )}
+                        {docsProgress.supportingTotal > 0 && (
+                            <span className="rounded-full border bg-background px-2 py-0.5">
+                                Supporting docs: {docsProgress.supportingTotal}
                             </span>
                         )}
                         <span className="rounded-full border bg-background px-2 py-0.5">
@@ -399,6 +422,23 @@ function QuestionResultPanel({ result }: { result: EvalResult | null | undefined
                                             <span
                                                 key={i}
                                                 className="inline-flex items-center rounded-full border bg-background px-1.5 py-0.5 text-[10px]"
+                                            >
+                                                {doc}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {truth.retrieval_truth.supporting_documents.length > 0 && (
+                                <div>
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                        Supporting Documents
+                                    </span>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                        {truth.retrieval_truth.supporting_documents.map((doc, i) => (
+                                            <span
+                                                key={i}
+                                                className="inline-flex items-center rounded-full border border-dashed bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted-foreground"
                                             >
                                                 {doc}
                                             </span>

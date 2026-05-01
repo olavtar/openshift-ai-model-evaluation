@@ -8,6 +8,7 @@ Generates truth for two entry paths:
   running the expected answer through the same retrieval pipeline as evaluation.
 """
 
+import hashlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -21,6 +22,167 @@ from .coverage import COVERAGE_TIMEOUT, EXTRACT_CONCEPTS_PROMPT, _strip_markdown
 from .retrieval import retrieve_chunks
 
 logger = logging.getLogger(__name__)
+
+_classification_cache: dict[str, dict[str, list[str]]] = {}
+_CLASSIFICATION_CACHE_MAX = 200
+
+CLASSIFY_DOCUMENTS_PROMPT = """\
+Given this user question, expected answer, and the following documents with \
+excerpts, classify each document's role in answering THIS SPECIFIC question.
+
+User question:
+{question}
+
+Expected answer:
+{expected_answer}
+
+A document is "required" if the expected answer depends on it for a core part \
+of the answer to the user's question:
+- the answer explains, analyzes, or describes the document's content substantively
+- removing the document would leave a gap in the answer's main argument
+
+A document is "supporting" if:
+- the answer only mentions it briefly or in passing (e.g. "may include X")
+- it provides examples, illustrations, or elaboration on points covered by other documents
+- it covers secondary, optional, or background disclosures
+- removing it would not change the core substance of the answer
+
+Do NOT classify a document as required only because its excerpt contains \
+mandatory words like "must", "shall", "required", or "filed with the SEC". \
+A regulatory document can contain mandatory language and still be supporting \
+for this specific question.
+
+Classify based on how the expected answer uses the document to answer the \
+user's question, not on how important the document's content is in general.
+
+If a document supports only an ongoing-reporting example, secondary filing, \
+parenthetical note, or "may include" clause, classify it as supporting.
+
+Documents:
+{documents_block}
+
+Return only valid JSON: {{"required": ["doc1.pdf", ...], "supporting": ["doc2.pdf", ...]}}
+Every document must appear in exactly one list.\
+"""
+
+
+def _fallback_classify(doc_to_chunks: dict[str, list[dict]]) -> dict[str, list[str]]:
+    """Chunk-count heuristic fallback when LLM classification fails."""
+    required = sorted(d for d, chunks in doc_to_chunks.items() if len(chunks) >= 2)
+    supporting = sorted(d for d, chunks in doc_to_chunks.items() if len(chunks) < 2)
+    if not required and supporting:
+        required = supporting[:1]
+        supporting = supporting[1:]
+    return {"required": required, "supporting": supporting}
+
+
+async def classify_documents(
+    question: str,
+    expected_answer: str,
+    doc_to_chunks: dict[str, list[dict]],
+    model_name: str,
+) -> dict[str, list[str]]:
+    """Classify documents as required vs supporting using the judge model.
+
+    Uses LLM-based classification with explicit criteria. Falls back to
+    chunk-count heuristic on failure. Results are cached by content hash.
+
+    Args:
+        question: The user question text (provides classification context).
+        expected_answer: The expected answer text.
+        doc_to_chunks: Mapping of document filename to list of chunk dicts
+            (each with at least 'text' key).
+        model_name: Judge model for classification.
+
+    Returns:
+        Dict with 'required' and 'supporting' lists of document filenames.
+    """
+    if not doc_to_chunks:
+        return {"required": [], "supporting": []}
+
+    cache_input = question + expected_answer + json.dumps(
+        sorted((k, [c.get("text", "")[:200] for c in v]) for k, v in doc_to_chunks.items())
+    )
+    cache_key = hashlib.sha256(cache_input.encode()).hexdigest()
+
+    if cache_key in _classification_cache:
+        return _classification_cache[cache_key]
+
+    model_cfg = settings.get_model_config(model_name)
+    if not model_cfg["token"]:
+        logger.warning("No API token for classification, using fallback heuristic")
+        result = _fallback_classify(doc_to_chunks)
+        _classification_cache[cache_key] = result
+        return result
+
+    docs_block_parts = []
+    for i, (doc_name, chunks) in enumerate(sorted(doc_to_chunks.items()), 1):
+        excerpts = " ".join(c.get("text", "")[:200] for c in chunks)
+        docs_block_parts.append(f"{i}. {doc_name}: {excerpts}")
+    documents_block = "\n".join(docs_block_parts)
+
+    prompt_text = CLASSIFY_DOCUMENTS_PROMPT.format(
+        question=question,
+        expected_answer=expected_answer,
+        documents_block=documents_block,
+    )
+
+    url = f"{model_cfg['endpoint']}/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {model_cfg['token']}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model_name,
+        "messages": [{"role": "user", "content": prompt_text}],
+        "temperature": 0.0,
+        "max_tokens": 512,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        content = _strip_markdown_fencing(content)
+        classification = json.loads(content)
+
+        if not isinstance(classification, dict):
+            raise ValueError("Classification response is not a dict")
+
+        all_docs = set(doc_to_chunks.keys())
+        required = [d for d in classification.get("required", []) if d in all_docs]
+        supporting = [d for d in classification.get("supporting", []) if d in all_docs]
+
+        classified = set(required) | set(supporting)
+        for doc in all_docs - classified:
+            supporting.append(doc)
+        required = sorted(required)
+        supporting = sorted(supporting)
+
+        if not required and supporting:
+            required = supporting[:1]
+            supporting = supporting[1:]
+
+        logger.info(
+            "Document classification: %d required, %d supporting",
+            len(required),
+            len(supporting),
+        )
+
+    except Exception as e:
+        logger.warning("LLM document classification failed (%s), using fallback", e)
+        result = _fallback_classify(doc_to_chunks)
+        _classification_cache[cache_key] = result
+        return result
+
+    result = {"required": required, "supporting": supporting}
+    if len(_classification_cache) >= _CLASSIFICATION_CACHE_MAX:
+        _classification_cache.clear()
+    _classification_cache[cache_key] = result
+    return result
 
 
 async def extract_answer_truth(expected_answer: str, model_name: str) -> AnswerTruth:
@@ -86,47 +248,77 @@ async def extract_answer_truth(expected_answer: str, model_name: str) -> AnswerT
         raise RuntimeError(f"Concept extraction HTTP {e.response.status_code}") from e
 
 
-def build_retrieval_truth_from_synthesis(source_chunks: list[dict]) -> RetrievalTruth:
+async def build_retrieval_truth_from_synthesis(
+    question: str,
+    expected_answer: str,
+    source_chunks: list[dict],
+    model_name: str,
+) -> RetrievalTruth:
     """Build retrieval truth from chunks used during question synthesis.
 
+    Classifies documents as required vs supporting using the judge model,
+    falling back to chunk-count heuristic on failure.
+
     Args:
-        source_chunks: Chunk dicts with 'id' and 'source_document' keys.
+        question: The user question text.
+        expected_answer: The expected answer text for classification context.
+        source_chunks: Chunk dicts with 'id', 'text', and 'source_document' keys.
+        model_name: Judge model for document classification.
 
     Returns:
-        RetrievalTruth with traced evidence.
+        RetrievalTruth with traced evidence and document classification.
     """
-    required_documents = sorted(
-        {c["source_document"] for c in source_chunks if c.get("source_document")}
-    )
-    expected_chunk_refs = [f"chunk:{c['id']}" for c in source_chunks if c.get("id")]
+    doc_to_chunks: dict[str, list[dict]] = {}
+    for chunk in source_chunks:
+        doc = chunk.get("source_document", "")
+        if doc:
+            doc_to_chunks.setdefault(doc, []).append(chunk)
+
+    classification = await classify_documents(question, expected_answer, doc_to_chunks, model_name)
+    required_docs = set(classification["required"])
+    supporting_docs = set(classification["supporting"])
+
+    required_refs = [
+        f"chunk:{c['id']}" for c in source_chunks
+        if c.get("id") and c.get("source_document", "") in required_docs
+    ]
+    supporting_refs = [
+        f"chunk:{c['id']}" for c in source_chunks
+        if c.get("id") and c.get("source_document", "") in supporting_docs
+    ]
 
     return RetrievalTruth(
-        required_documents=required_documents,
-        expected_chunk_refs=expected_chunk_refs,
+        required_documents=sorted(required_docs),
+        expected_chunk_refs=required_refs,
+        supporting_documents=sorted(supporting_docs),
+        supporting_chunk_refs=supporting_refs,
         evidence_mode="traced_from_synthesis",
     )
 
 
 async def ground_answer_to_corpus(
+    question: str,
     expected_answer: str,
     session: AsyncSession,
+    model_name: str,
     retrieval_kwargs: dict | None = None,
-) -> RetrievalTruth:
+) -> tuple[RetrievalTruth, list[int]]:
     """Ground an expected answer against the uploaded corpus.
 
     Uses the same retrieval pipeline as evaluation to find chunks that
-    best match the expected answer text.
+    best match the expected answer text, then classifies documents as
+    required vs supporting.
 
     Args:
+        question: The user question text (provides classification context).
         expected_answer: The expected answer text to ground.
         session: Database session for retrieval queries.
+        model_name: Judge model for document classification.
         retrieval_kwargs: Profile-driven retrieval parameters (top_k, etc.).
 
     Returns:
-        RetrievalTruth with corpus-grounded evidence.
+        Tuple of (RetrievalTruth with classification, source_chunk_ids).
     """
-    # Filter to keys accepted by retrieve_chunks; callers may pass
-    # profile dicts that include evaluation-only keys.
     _accepted = {
         "top_k",
         "max_per_doc",
@@ -143,19 +335,43 @@ async def ground_answer_to_corpus(
         **kwargs,
     )
 
-    required_documents = sorted({c["source_document"] for c in chunks if c.get("source_document")})
-    expected_chunk_refs = [f"chunk:{c['id']}" for c in chunks if c.get("id")]
     source_chunk_ids = [c["id"] for c in chunks if c.get("id")]
 
+    doc_to_chunks: dict[str, list[dict]] = {}
+    for chunk in chunks:
+        doc = chunk.get("source_document", "")
+        if doc:
+            doc_to_chunks.setdefault(doc, []).append(chunk)
+
+    classification = await classify_documents(
+        question, expected_answer, doc_to_chunks, model_name
+    )
+    required_docs = set(classification["required"])
+    supporting_docs = set(classification["supporting"])
+
+    required_refs = [
+        f"chunk:{c['id']}" for c in chunks
+        if c.get("id") and c.get("source_document", "") in required_docs
+    ]
+    supporting_refs = [
+        f"chunk:{c['id']}" for c in chunks
+        if c.get("id") and c.get("source_document", "") in supporting_docs
+    ]
+
+    all_docs = sorted(required_docs | supporting_docs)
     logger.info(
-        "Corpus grounding: %d chunks from %d documents",
+        "Corpus grounding: %d chunks from %d documents (%d required, %d supporting)",
         len(chunks),
-        len(required_documents),
+        len(all_docs),
+        len(required_docs),
+        len(supporting_docs),
     )
 
     return RetrievalTruth(
-        required_documents=required_documents,
-        expected_chunk_refs=expected_chunk_refs,
+        required_documents=sorted(required_docs),
+        expected_chunk_refs=required_refs,
+        supporting_documents=sorted(supporting_docs),
+        supporting_chunk_refs=supporting_refs,
         evidence_mode="grounded_from_manual_answer",
     ), source_chunk_ids
 
@@ -225,6 +441,7 @@ def _align_chunks_to_answer(
 
 
 async def generate_truth_from_synthesis(
+    question: str,
     expected_answer: str,
     source_chunks: list[dict],
     model_name: str,
@@ -236,6 +453,7 @@ async def generate_truth_from_synthesis(
     answer, rather than all synthesis chunks.
 
     Args:
+        question: The synthesized question text.
         expected_answer: LLM-generated expected answer.
         source_chunks: Chunks used during synthesis, each with 'id',
             'text', and 'source_document' keys.
@@ -246,7 +464,9 @@ async def generate_truth_from_synthesis(
     """
     answer_truth = await extract_answer_truth(expected_answer, model_name)
     aligned_chunks = _align_chunks_to_answer(expected_answer, source_chunks)
-    retrieval_truth = build_retrieval_truth_from_synthesis(aligned_chunks)
+    retrieval_truth = await build_retrieval_truth_from_synthesis(
+        question, expected_answer, aligned_chunks, model_name
+    )
     source_chunk_ids = [c["id"] for c in aligned_chunks if c.get("id")]
     metadata = build_truth_metadata(model_name, source_chunk_ids)
 
@@ -258,6 +478,7 @@ async def generate_truth_from_synthesis(
 
 
 async def generate_truth_from_manual_answer(
+    question: str,
     expected_answer: str,
     session: AsyncSession,
     model_name: str,
@@ -269,6 +490,7 @@ async def generate_truth_from_manual_answer(
     retrieval pipeline as evaluation.
 
     Args:
+        question: The user question text.
         expected_answer: User-provided expected answer.
         session: Database session for corpus retrieval.
         model_name: Judge model for concept extraction.
@@ -279,7 +501,7 @@ async def generate_truth_from_manual_answer(
     """
     answer_truth = await extract_answer_truth(expected_answer, model_name)
     retrieval_truth, source_chunk_ids = await ground_answer_to_corpus(
-        expected_answer, session, retrieval_kwargs
+        question, expected_answer, session, model_name, retrieval_kwargs
     )
     metadata = build_truth_metadata(model_name, source_chunk_ids)
 

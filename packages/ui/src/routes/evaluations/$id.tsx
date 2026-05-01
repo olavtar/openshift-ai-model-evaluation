@@ -240,12 +240,16 @@ function ResultRow({ result }: { result: EvalResult }) {
     const visibleConcepts = showAllConcepts ? requiredConcepts : defaultConcepts;
 
     const requiredDocs = truth?.retrieval_truth.required_documents ?? [];
+    const supportingDocs = truth?.retrieval_truth.supporting_documents ?? [];
     const retrievedDocs = new Set(
         parsedChunks
             .map((chunk) => chunk.document.trim().toLowerCase())
             .filter((doc) => doc.length > 0),
     );
     const requiredDocsFound = requiredDocs.filter((doc) =>
+        retrievedDocs.has(doc.trim().toLowerCase()),
+    ).length;
+    const supportingDocsFound = supportingDocs.filter((doc) =>
         retrievedDocs.has(doc.trim().toLowerCase()),
     ).length;
 
@@ -364,23 +368,38 @@ function ResultRow({ result }: { result: EvalResult }) {
                         <div>
                             <h3 className="mb-1.5 text-sm font-semibold">Deterministic Checks</h3>
                             <div className="space-y-1">
-                                {result.deterministic_checks.map((check, i) => (
-                                    <div key={i} className="flex items-start gap-2 text-sm">
-                                        {check.passed ? (
-                                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                                        ) : (
-                                            <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-                                        )}
-                                        <div>
-                                            <span className="font-medium">{check.check_name}</span>
-                                            {check.detail && (
-                                                <span className="ml-1 text-muted-foreground">
-                                                    &mdash; {check.detail}
+                                {result.deterministic_checks.map((check, i) => {
+                                    const hasSupportingWarning =
+                                        check.passed &&
+                                        check.detail?.toLowerCase().includes('supporting documents');
+                                    const Icon = check.passed
+                                        ? hasSupportingWarning
+                                            ? AlertTriangle
+                                            : CheckCircle2
+                                        : XCircle;
+                                    const iconClass = check.passed
+                                        ? hasSupportingWarning
+                                            ? 'text-amber-600 dark:text-amber-400'
+                                            : 'text-emerald-600 dark:text-emerald-400'
+                                        : 'text-rose-600 dark:text-rose-400';
+                                    return (
+                                        <div key={i} className="flex items-start gap-2 text-sm">
+                                            <Icon
+                                                className={`mt-0.5 h-4 w-4 shrink-0 ${iconClass}`}
+                                            />
+                                            <div>
+                                                <span className="font-medium">
+                                                    {check.check_name}
                                                 </span>
-                                            )}
+                                                {check.detail && (
+                                                    <span className="ml-1 text-muted-foreground">
+                                                        &mdash; {check.detail}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -396,6 +415,12 @@ function ResultRow({ result }: { result: EvalResult }) {
                                 {requiredDocs.length > 0 && (
                                     <span className="rounded-full border bg-background px-2 py-0.5">
                                         Required docs found: {requiredDocsFound}/{requiredDocs.length}
+                                    </span>
+                                )}
+                                {supportingDocs.length > 0 && (
+                                    <span className="rounded-full border bg-background px-2 py-0.5">
+                                        Supporting docs found: {supportingDocsFound}/
+                                        {supportingDocs.length}
                                     </span>
                                 )}
                                 <span className="rounded-full border bg-background px-2 py-0.5">
@@ -468,6 +493,25 @@ function ResultRow({ result }: { result: EvalResult }) {
                                                         {doc}
                                                     </span>
                                                 ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {truth.retrieval_truth.supporting_documents.length > 0 && (
+                                        <div>
+                                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                                Supporting Documents
+                                            </span>
+                                            <div className="mt-1 flex flex-wrap gap-1.5">
+                                                {truth.retrieval_truth.supporting_documents.map(
+                                                    (doc, i) => (
+                                                        <span
+                                                            key={i}
+                                                            className="inline-flex items-center rounded-full border border-dashed bg-muted/30 px-2 py-0.5 text-xs text-muted-foreground"
+                                                        >
+                                                            {doc}
+                                                        </span>
+                                                    ),
+                                                )}
                                             </div>
                                         </div>
                                     )}

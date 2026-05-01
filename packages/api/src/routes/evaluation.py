@@ -399,6 +399,7 @@ async def _process_question(
                     result.scores,
                     profile,
                     deterministic_checks=result.deterministic_checks,
+                    coverage_gaps=result.coverage_gaps,
                 )
 
         except Exception as e:
@@ -644,6 +645,7 @@ async def create_eval_run(
             if q.expected_answer and not q.truth:
                 try:
                     q.truth = await generate_truth_from_manual_answer(
+                        q.question,
                         q.expected_answer,
                         session,
                         judge_model,
