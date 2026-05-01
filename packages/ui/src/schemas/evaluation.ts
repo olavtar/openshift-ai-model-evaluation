@@ -33,6 +33,8 @@ export const AnswerTruthSchema = z.object({
 export const RetrievalTruthSchema = z.object({
     required_documents: z.array(z.string()),
     expected_chunk_refs: z.array(z.string()),
+    supporting_documents: z.array(z.string()).optional().default([]),
+    supporting_chunk_refs: z.array(z.string()).optional().default([]),
     evidence_mode: z.string(),
 });
 

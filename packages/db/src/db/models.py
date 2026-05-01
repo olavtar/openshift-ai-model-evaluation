@@ -94,6 +94,8 @@ class QuestionSet(Base):
     questions = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 
+    eval_runs = relationship("EvalRun", back_populates="question_set", cascade="all, delete-orphan")
+
     def __repr__(self) -> str:
         return f"<QuestionSet(id={self.id}, name='{self.name}', count={len(self.questions)})>"
 
@@ -105,7 +107,7 @@ class EvalRun(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_name = Column(String(200), nullable=False)
-    question_set_id = Column(Integer, ForeignKey("question_set.id", ondelete="SET NULL"), nullable=True, index=True)
+    question_set_id = Column(Integer, ForeignKey("question_set.id", ondelete="CASCADE"), nullable=True, index=True)
     status = Column(String(50), nullable=False, default="pending")
     total_questions = Column(Integer, nullable=False, default=0)
     completed_questions = Column(Integer, nullable=False, default=0)
@@ -135,7 +137,7 @@ class EvalRun(Base):
     created_at = Column(DateTime, server_default=func.now())
     completed_at = Column(DateTime, nullable=True)
 
-    question_set = relationship("QuestionSet", lazy="joined")
+    question_set = relationship("QuestionSet", back_populates="eval_runs", lazy="joined")
     results = relationship("EvalResult", back_populates="eval_run", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:

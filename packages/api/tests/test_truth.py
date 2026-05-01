@@ -33,7 +33,7 @@ def test_truth_payload_valid():
     )
     assert len(payload.answer_truth.required_concepts) == 2
     assert payload.retrieval_truth.evidence_mode == "traced_from_synthesis"
-    assert payload.metadata.truth_schema_version == "1.0"
+    assert payload.metadata.truth_schema_version == "1.1"
 
 
 def test_truth_payload_grounded_mode():
@@ -72,7 +72,7 @@ def test_truth_payload_defaults():
         generated_by_model="test-model",
         generated_at=datetime(2026, 4, 23),
     )
-    assert meta.truth_schema_version == "1.0"
+    assert meta.truth_schema_version == "1.1"
     assert meta.source_chunk_ids == []
 
 
@@ -218,8 +218,10 @@ def test_extract_answer_truth_raises_on_no_token():
 
 
 def test_build_retrieval_truth_from_synthesis():
-    """Should build retrieval truth from source chunks."""
+    """Should build retrieval truth with document classification."""
     from src.services.truth_generation import build_retrieval_truth_from_synthesis
+
+    _setup_settings()
 
     source_chunks = [
         {"id": 42, "source_document": "sec-etf-guide.pdf", "text": "..."},
@@ -227,22 +229,44 @@ def test_build_retrieval_truth_from_synthesis():
         {"id": 67, "source_document": "form-n1a-instructions.pdf", "text": "..."},
     ]
 
-    result = build_retrieval_truth_from_synthesis(source_chunks)
+    classification = {
+        "required": ["sec-etf-guide.pdf"],
+        "supporting": ["form-n1a-instructions.pdf"],
+    }
+
+    with patch(
+        "src.services.truth_generation.classify_documents",
+        new_callable=AsyncMock,
+        return_value=classification,
+    ):
+        result = asyncio.run(
+            build_retrieval_truth_from_synthesis(
+                "What are ETF requirements?", "ETF answer...", source_chunks, "test-judge"
+            )
+        )
 
     assert isinstance(result, RetrievalTruth)
     assert result.evidence_mode == "traced_from_synthesis"
-    assert sorted(result.required_documents) == [
-        "form-n1a-instructions.pdf",
-        "sec-etf-guide.pdf",
-    ]
-    assert result.expected_chunk_refs == ["chunk:42", "chunk:43", "chunk:67"]
+    assert result.required_documents == ["sec-etf-guide.pdf"]
+    assert result.supporting_documents == ["form-n1a-instructions.pdf"]
+    assert result.expected_chunk_refs == ["chunk:42", "chunk:43"]
+    assert result.supporting_chunk_refs == ["chunk:67"]
 
 
 def test_build_retrieval_truth_from_synthesis_empty_chunks():
     """Should handle empty chunk list."""
     from src.services.truth_generation import build_retrieval_truth_from_synthesis
 
-    result = build_retrieval_truth_from_synthesis([])
+    _setup_settings()
+
+    with patch(
+        "src.services.truth_generation.classify_documents",
+        new_callable=AsyncMock,
+        return_value={"required": [], "supporting": []},
+    ):
+        result = asyncio.run(
+            build_retrieval_truth_from_synthesis("question?", "answer", [], "test-judge")
+        )
 
     assert result.required_documents == []
     assert result.expected_chunk_refs == []
@@ -250,23 +274,38 @@ def test_build_retrieval_truth_from_synthesis_empty_chunks():
 
 
 def test_ground_answer_to_corpus():
-    """Should ground expected answer against corpus using retrieve_chunks."""
+    """Should ground expected answer against corpus with classification."""
     from src.services.truth_generation import ground_answer_to_corpus
+
+    _setup_settings()
 
     mock_chunks = [
         {"id": 12, "source_document": "sec-etf-guide.pdf", "text": "...", "score": 0.9},
         {"id": 19, "source_document": "sec-etf-guide.pdf", "text": "...", "score": 0.8},
     ]
 
+    classification = {"required": ["sec-etf-guide.pdf"], "supporting": []}
     mock_session = AsyncMock()
 
-    with patch(
-        "src.services.truth_generation.retrieve_chunks",
-        new_callable=AsyncMock,
-        return_value=mock_chunks,
-    ) as mock_retrieve:
+    with (
+        patch(
+            "src.services.truth_generation.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=mock_chunks,
+        ) as mock_retrieve,
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value=classification,
+        ),
+    ):
         result, source_ids = asyncio.run(
-            ground_answer_to_corpus("ETFs register under the Investment Company Act...", mock_session)
+            ground_answer_to_corpus(
+                "What are ETF filing requirements?",
+                "ETFs register under the Investment Company Act...",
+                mock_session,
+                "test-judge",
+            )
         )
 
     assert isinstance(result, RetrievalTruth)
@@ -281,16 +320,28 @@ def test_ground_answer_to_corpus_passes_retrieval_kwargs():
     """Should forward profile-driven retrieval parameters."""
     from src.services.truth_generation import ground_answer_to_corpus
 
+    _setup_settings()
+
     mock_session = AsyncMock()
     kwargs = {"top_k": 10, "keyword_enabled": False}
 
-    with patch(
-        "src.services.truth_generation.retrieve_chunks",
-        new_callable=AsyncMock,
-        return_value=[],
-    ) as mock_retrieve:
+    with (
+        patch(
+            "src.services.truth_generation.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_retrieve,
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value={"required": [], "supporting": []},
+        ),
+    ):
         asyncio.run(
-            ground_answer_to_corpus("Some answer", mock_session, retrieval_kwargs=kwargs)
+            ground_answer_to_corpus(
+                "Some question?", "Some answer", mock_session, "test-judge",
+                retrieval_kwargs=kwargs,
+            )
         )
 
     call_kwargs = mock_retrieve.call_args
@@ -316,10 +367,20 @@ def test_generate_truth_from_synthesis():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.services.truth_generation.httpx.AsyncClient", return_value=mock_client):
+    classification = {"required": ["guide.pdf"], "supporting": []}
+
+    with (
+        patch("src.services.truth_generation.httpx.AsyncClient", return_value=mock_client),
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value=classification,
+        ),
+    ):
         result = asyncio.run(
             generate_truth_from_synthesis(
-                "ETFs must file Form N-1A...", source_chunks, "test-judge"
+                "What are ETF filing requirements?",
+                "ETFs must file Form N-1A...", source_chunks, "test-judge",
             )
         )
 
@@ -348,6 +409,7 @@ def test_generate_truth_from_manual_answer():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
+    classification = {"required": ["guide.pdf"], "supporting": []}
     mock_session = AsyncMock()
 
     with (
@@ -357,10 +419,16 @@ def test_generate_truth_from_manual_answer():
             new_callable=AsyncMock,
             return_value=mock_chunks,
         ),
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value=classification,
+        ),
     ):
         result = asyncio.run(
             generate_truth_from_manual_answer(
-                "ETFs register using Form N-1A...", mock_session, "test-judge"
+                "What are ETF filing requirements?",
+                "ETFs register using Form N-1A...", mock_session, "test-judge",
             )
         )
 
@@ -380,6 +448,6 @@ def test_build_truth_metadata():
     assert isinstance(meta, TruthMetadata)
     assert meta.generated_by_model == "test-model"
     assert meta.source_chunk_ids == [1, 2, 3]
-    assert meta.truth_schema_version == "1.0"
+    assert meta.truth_schema_version == "1.1"
     assert meta.concept_extraction_version == "v1"
     assert isinstance(meta.generated_at, datetime)

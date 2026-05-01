@@ -33,17 +33,22 @@ def check_document_presence(
     truth: TruthPayload,
     retrieved_chunks: list[dict],
 ) -> CheckResult:
-    """Check if all required documents are represented in retrieved chunks.
+    """Check if required documents are represented in retrieved chunks.
+
+    Only missing required documents cause a FAIL. Missing supporting
+    documents produce a passing result with an informational warning.
 
     Args:
         truth: Structured truth payload with retrieval requirements.
         retrieved_chunks: Chunks from retrieval pipeline.
 
     Returns:
-        CheckResult indicating whether all required documents were found.
+        CheckResult indicating whether required documents were found.
     """
     required = truth.retrieval_truth.required_documents
-    if not required:
+    supporting = truth.retrieval_truth.supporting_documents
+
+    if not required and not supporting:
         return CheckResult(
             check_name="document_presence",
             passed=True,
@@ -52,21 +57,53 @@ def check_document_presence(
         )
 
     retrieved_docs = {c.get("source_document", "") for c in retrieved_chunks}
-    missing = [doc for doc in required if doc not in retrieved_docs]
+    missing_required = [doc for doc in required if doc not in retrieved_docs]
+    missing_supporting = [doc for doc in supporting if doc not in retrieved_docs]
 
-    if missing:
+    if missing_required:
+        detail = (
+            f"Missing {len(missing_required)}/{len(required)} "
+            f"required documents: {missing_required}"
+        )
+        if missing_supporting:
+            detail += (
+                f". Also missing {len(missing_supporting)} "
+                f"supporting documents: {missing_supporting}"
+            )
         return CheckResult(
             check_name="document_presence",
             passed=False,
-            detail=f"Missing {len(missing)}/{len(required)} required documents: {missing}",
+            detail=detail,
             category="retrieval",
         )
+
+    parts = [f"All {len(required)} required documents present"]
+    if missing_supporting:
+        parts.append(
+            f"Missing {len(missing_supporting)} supporting documents: {missing_supporting}"
+        )
+    elif supporting:
+        parts.append(f"all {len(supporting)} supporting documents also present")
+
     return CheckResult(
         check_name="document_presence",
         passed=True,
-        detail=f"All {len(required)} required documents present",
+        detail=". ".join(parts),
         category="retrieval",
     )
+
+
+def _count_chunk_matches(refs: list[str], retrieved_ids: set[int]) -> int:
+    """Count how many chunk refs match retrieved chunk IDs."""
+    matched = 0
+    for ref in refs:
+        if ref.startswith("chunk:"):
+            try:
+                if int(ref[6:]) in retrieved_ids:
+                    matched += 1
+            except ValueError:
+                pass
+    return matched
 
 
 def check_chunk_alignment(
@@ -75,18 +112,19 @@ def check_chunk_alignment(
 ) -> CheckResult:
     """Check if expected chunk references are found in retrieved chunks.
 
-    Supports chunk:{id} canonical format from truth payloads. Legacy
-    filename/page formats are handled by compute_chunk_alignment() in
-    scoring.py for backward compatibility with old question data.
+    Recall threshold (50%) applies only to required chunk refs.
+    Supporting chunk refs are reported informatively but excluded
+    from the pass/fail threshold.
 
     Args:
         truth: Structured truth payload with chunk reference expectations.
         retrieved_chunks: Chunks from retrieval pipeline.
 
     Returns:
-        CheckResult with pass/fail based on chunk recall (threshold: 50%).
+        CheckResult with pass/fail based on required chunk recall.
     """
     expected_refs = truth.retrieval_truth.expected_chunk_refs
+    supporting_refs = truth.retrieval_truth.supporting_chunk_refs
     if not expected_refs:
         return CheckResult(
             check_name="chunk_alignment",
@@ -100,23 +138,19 @@ def check_chunk_alignment(
         if chunk.get("id") is not None:
             retrieved_ids.add(int(chunk["id"]))
 
-    matched = 0
-    for ref in expected_refs:
-        if ref.startswith("chunk:"):
-            try:
-                chunk_id = int(ref[6:])
-                if chunk_id in retrieved_ids:
-                    matched += 1
-            except ValueError:
-                pass
-
-    recall = matched / len(expected_refs) if expected_refs else 1.0
+    matched = _count_chunk_matches(expected_refs, retrieved_ids)
+    recall = matched / len(expected_refs)
     passed = recall >= 0.5
+
+    detail = f"Chunk recall: {matched}/{len(expected_refs)} ({recall:.0%})"
+    if supporting_refs:
+        sup_matched = _count_chunk_matches(supporting_refs, retrieved_ids)
+        detail += f", {sup_matched}/{len(supporting_refs)} supporting"
 
     return CheckResult(
         check_name="chunk_alignment",
         passed=passed,
-        detail=f"Chunk recall: {matched}/{len(expected_refs)} ({recall:.0%})",
+        detail=detail,
         category="retrieval",
     )
 

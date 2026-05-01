@@ -92,6 +92,32 @@ def test_delete_question_set(client):
     assert get_resp.status_code == 404
 
 
+def test_delete_question_set_cascades_eval_runs(client):
+    """Should delete associated eval runs and results when question set is deleted."""
+    create_resp = client.post(
+        "/question-sets/",
+        json={"name": "Cascade Set", "questions": [{"question": "Q1"}]},
+    )
+    qs_id = create_resp.json()["id"]
+
+    with patch("src.routes.evaluation._run_evaluation", new_callable=AsyncMock):
+        eval_resp = client.post(
+            "/evaluations/",
+            json={
+                "model_name": "test-model",
+                "question_set_id": qs_id,
+                "questions": [{"question": "Q1"}],
+            },
+        )
+    eval_id = eval_resp.json()["eval_run_id"]
+
+    del_resp = client.delete(f"/question-sets/{qs_id}")
+    assert del_resp.status_code == 204
+
+    get_eval = client.get(f"/evaluations/{eval_id}")
+    assert get_eval.status_code == 404
+
+
 # --- Truth generation tests ---
 
 

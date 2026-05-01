@@ -62,15 +62,44 @@ _DETERMINISTIC_FAIL_REASON_MAP = {
 }
 
 
+def _is_generation_only_gap(coverage_gaps: dict | None) -> bool:
+    """Return True when missing concepts are classified as generation-only.
+
+    This requires coverage data to include:
+    - at least one missing concept
+    - zero retrieval_failures
+    - one or more generation_failures
+    """
+    if not coverage_gaps:
+        return False
+
+    missing = coverage_gaps.get("missing")
+    retrieval_failures = coverage_gaps.get("retrieval_failures")
+    generation_failures = coverage_gaps.get("generation_failures")
+
+    return (
+        isinstance(missing, list)
+        and len(missing) > 0
+        and isinstance(retrieval_failures, list)
+        and len(retrieval_failures) == 0
+        and isinstance(generation_failures, list)
+        and len(generation_failures) > 0
+    )
+
+
 def compute_question_verdict(
     scores: dict[str, float | None],
     profile: EvalProfile,
     deterministic_checks: list[dict] | None = None,
+    coverage_gaps: dict | None = None,
 ) -> QuestionVerdict:
     """Apply profile thresholds to metric scores and produce a verdict.
 
     Logic:
     - If any deterministic retrieval check fails -> FAIL
+      - Exception: chunk_alignment does not force FAIL when:
+        (a) document_presence passes, and
+        (b) coverage gaps show generation-only misses.
     - If any metric is below its critical_threshold -> FAIL
     - If any metric is below its regular threshold -> REVIEW_REQUIRED
     - If all pass -> PASS
@@ -83,6 +112,7 @@ def compute_question_verdict(
         profile: The evaluation profile with thresholds.
         deterministic_checks: Optional list of deterministic check result dicts,
             each with check_name, passed, detail, category.
+        coverage_gaps: Optional coverage gap result dict (from detect_coverage_gaps).
 
     Returns:
         QuestionVerdict with verdict, fail_reasons, and metric lists.
@@ -95,8 +125,26 @@ def compute_question_verdict(
 
     # Check deterministic retrieval gates first
     if deterministic_checks:
+        document_presence_passed = False
+        for check in deterministic_checks:
+            if check.get("check_name", "") == "document_presence":
+                document_presence_passed = bool(check.get("passed", True))
+                break
+
+        generation_only_coverage = (
+            document_presence_passed and _is_generation_only_gap(coverage_gaps)
+        )
+
         for check in deterministic_checks:
             name = check.get("check_name", "")
+            if (
+                generation_only_coverage
+                and name == "chunk_alignment"
+                and not check.get("passed", True)
+            ):
+                # Retrieval docs are present and missing concepts were classified as
+                # generation-only, so treat low chunk recall as non-gating.
+                continue
             if name in _DETERMINISTIC_FAIL_CHECKS and not check.get("passed", True):
                 has_critical_fail = True
                 reason = _DETERMINISTIC_FAIL_REASON_MAP.get(name, f"FAIL_{name.upper()}")

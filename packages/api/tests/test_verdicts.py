@@ -253,6 +253,80 @@ def test_verdict_fail_on_chunk_alignment_failure(fsi_profile):
     assert "FAIL_RETRIEVAL_INCOMPLETE" in verdict.fail_reasons
 
 
+def test_verdict_ignores_chunk_alignment_for_generation_only_gaps(fsi_profile):
+    """Should not force FAIL on chunk_alignment when misses are generation-only."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "All required documents present",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "4/13",
+            "category": "retrieval",
+        },
+    ]
+    coverage_gaps = {
+        "missing": ["Rule 6c-11 requires daily website transparency"],
+        "retrieval_failures": [],
+        "generation_failures": ["Rule 6c-11 requires daily website transparency"],
+    }
+
+    verdict = compute_question_verdict(
+        scores,
+        fsi_profile,
+        deterministic_checks=checks,
+        coverage_gaps=coverage_gaps,
+    )
+    assert verdict.verdict == "PASS"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" not in verdict.fail_reasons
+
+
+def test_verdict_keeps_chunk_alignment_fail_for_retrieval_gaps(fsi_profile):
+    """Should still FAIL when chunk_alignment misses are retrieval-side."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "All required documents present",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "1/10",
+            "category": "retrieval",
+        },
+    ]
+    coverage_gaps = {
+        "missing": ["N-PORT filing deadline"],
+        "retrieval_failures": ["N-PORT filing deadline"],
+        "generation_failures": [],
+    }
+
+    verdict = compute_question_verdict(
+        scores,
+        fsi_profile,
+        deterministic_checks=checks,
+        coverage_gaps=coverage_gaps,
+    )
+    assert verdict.verdict == "FAIL"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" in verdict.fail_reasons
+
+
 def test_verdict_pass_with_passing_retrieval_checks(fsi_profile):
     """Should not affect verdict when retrieval checks pass."""
     scores = {

@@ -238,7 +238,7 @@ async def generate_questions(
                 if q.get("expected_answer"):
                     try:
                         truth = await generate_truth_from_synthesis(
-                            q["expected_answer"], chunk_data, judge_model
+                            q["question"], q["expected_answer"], chunk_data, judge_model
                         )
                         q["truth"] = truth
                     except Exception as e:

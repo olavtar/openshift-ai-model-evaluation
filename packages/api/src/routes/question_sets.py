@@ -2,11 +2,14 @@
 """Question set endpoints -- create, list, and delete reusable question sets."""
 
 import logging
+from datetime import datetime
+from typing import cast
 
 from db import QuestionSet, get_db
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
 from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
@@ -31,7 +34,7 @@ def _build_response(qs: QuestionSet) -> QuestionSetResponse:
         id=qs.id,
         name=qs.name,
         questions=items,
-        created_at=qs.created_at,
+        created_at=cast(datetime, qs.created_at),
     )
 
 
@@ -72,6 +75,7 @@ async def create_question_set(
             if q.get("expected_answer") and not q.get("truth"):
                 try:
                     truth = await generate_truth_from_manual_answer(
+                        q["question"],
                         q["expected_answer"],
                         session,
                         judge_model,
@@ -115,8 +119,13 @@ async def delete_question_set(
     question_set_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a question set."""
-    qs = await session.get(QuestionSet, question_set_id)
+    """Delete a question set and all associated eval runs/results."""
+    result = await session.execute(
+        select(QuestionSet)
+        .options(selectinload(QuestionSet.eval_runs))
+        .where(QuestionSet.id == question_set_id)
+    )
+    qs = result.scalars().first()
     if not qs:
         raise HTTPException(status_code=404, detail="Question set not found")
     await session.delete(qs)

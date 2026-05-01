@@ -545,7 +545,7 @@ function NewEvalForm({
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={handleSubmit}
-                                disabled={!selectedModel || validQuestionCount === 0 || createMutation.isPending}
+                                disabled={!selectedModel || validQuestionCount === 0 || createMutation.isPending || saveSetMutation.isPending || showSaveSet}
                                 className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                             >
                                 {createMutation.isPending ? (

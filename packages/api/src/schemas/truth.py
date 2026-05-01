@@ -32,6 +32,14 @@ class RetrievalTruth(BaseModel):
     expected_chunk_refs: list[str] = Field(
         default_factory=list, description='Canonical chunk references in "chunk:{id}" format.'
     )
+    supporting_documents: list[str] = Field(
+        default_factory=list,
+        description="Documents with marginal relevance (background, examples, secondary details).",
+    )
+    supporting_chunk_refs: list[str] = Field(
+        default_factory=list,
+        description='Chunk refs from supporting documents, in "chunk:{id}" format.',
+    )
     evidence_mode: Literal["traced_from_synthesis", "grounded_from_manual_answer"] = Field(
         ..., description="How retrieval truth was produced."
     )
@@ -40,7 +48,7 @@ class RetrievalTruth(BaseModel):
 class TruthMetadata(BaseModel):
     """Versioning and provenance for the truth payload."""
 
-    truth_schema_version: str = "1.0"
+    truth_schema_version: str = "1.1"
     concept_extraction_version: str = "v1"
     evidence_alignment_version: str = "v1"
     generated_by_model: str = Field(..., description="Model used for concept extraction.")
