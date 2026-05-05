@@ -5,6 +5,7 @@ import { z } from 'zod';
 export const QuestionSetItemSchema = z.object({
     question: z.string(),
     expected_answer: z.string().nullable().optional(),
+    truth: z.record(z.unknown()).nullable().optional(),
 });
 
 export const QuestionSetSchema = z.object({

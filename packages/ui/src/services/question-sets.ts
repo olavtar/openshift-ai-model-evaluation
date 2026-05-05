@@ -19,7 +19,10 @@ export async function createQuestionSet(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
     });
-    if (!response.ok) throw new Error('Failed to create question set');
+    if (!response.ok) {
+        const err = await response.json().catch(() => null);
+        throw new Error(err?.detail ?? `Failed to create question set (${response.status})`);
+    }
     const data = await response.json();
     return QuestionSetSchema.parse(data);
 }

@@ -17,6 +17,7 @@ import { z } from 'zod';
 export interface EvalQuestionInput {
     question: string;
     expected_answer?: string | null;
+    truth?: Record<string, unknown> | null;
 }
 
 export async function createEvalRun(

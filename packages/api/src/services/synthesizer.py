@@ -4,6 +4,7 @@
 import json
 import logging
 import random
+import re
 from collections import defaultdict
 
 import httpx
@@ -124,7 +125,7 @@ def _balanced_sample(
 
 
 def _parse_questions_json(raw: str) -> dict:
-    """Parse model JSON; tolerate optional ```json fences."""
+    """Parse model JSON; tolerate fences, trailing commas, and missing commas."""
     text = (raw or "").strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -133,7 +134,31 @@ def _parse_questions_json(raw: str) -> dict:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines).strip()
-    return json.loads(text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Repair: remove trailing commas before } or ]
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)
+    # Repair: insert missing commas between "value"\n"key" patterns
+    repaired = re.sub(r'"\s*\n(\s*")', r'",\n\1', repaired)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: regex-extract question/answer pairs
+    pairs = re.findall(
+        r'"question"\s*:\s*"((?:[^"\\]|\\.)*)"\s*[,}]\s*"expected_answer"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        text,
+    )
+    if pairs:
+        logger.warning("JSON parse failed, extracted %d questions via regex fallback", len(pairs))
+        return {"questions": [{"question": q, "expected_answer": a} for q, a in pairs]}
+
+    raise ValueError(f"Could not parse question synthesis response: {text[:200]}")
 
 
 async def generate_questions(

@@ -4,13 +4,13 @@
 import asyncio
 import logging
 import os
-from datetime import UTC, datetime
 
 from db import Chunk, Document, get_db
 from db.database import SessionLocal
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..schemas.documents import (
     DocumentResponse,
@@ -243,13 +243,17 @@ async def delete_document(
     document_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft-delete a document (idempotent)."""
-    doc = await session.get(Document, document_id)
+    """Delete a document and all its chunks/embeddings."""
+    result = await session.execute(
+        select(Document)
+        .options(selectinload(Document.chunks))
+        .where(Document.id == document_id)
+    )
+    doc = result.scalars().first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-    if doc.deleted_at is None:
-        doc.deleted_at = datetime.now(UTC).replace(tzinfo=None)
-        await session.commit()
+    await session.delete(doc)
+    await session.commit()
 
 
 @router.post("/{document_id}/embed", response_model=DocumentStatusResponse)
