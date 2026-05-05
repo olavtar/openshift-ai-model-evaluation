@@ -176,10 +176,12 @@ function NewEvalForm({
 
     const addQuestion = () => {
         setQuestions([...questions, { question: '', expected_answer: '' }]);
+        setLoadedSetId(undefined);
     };
 
     const removeQuestion = (index: number) => {
         setQuestions(questions.filter((_, i) => i !== index));
+        setLoadedSetId(undefined);
     };
 
     const handleSynthesize = () => {
@@ -190,11 +192,15 @@ function NewEvalForm({
                     const generated: EvalQuestionInput[] = data.questions.map((q) => ({
                         question: q.question,
                         expected_answer: q.expected_answer,
+                        truth: q.truth ?? undefined,
                     }));
                     const unique = generated.filter(
                         (g) => !questions.some((q) => q.question === g.question),
                     );
-                    setQuestions([...questions, ...unique]);
+                    if (unique.length > 0) {
+                        setQuestions([...questions, ...unique]);
+                        setLoadedSetId(undefined);
+                    }
                 },
             },
         );
@@ -321,6 +327,7 @@ function NewEvalForm({
                                                         setQuestions(s.questions.map((q) => ({
                                                             question: q.question,
                                                             expected_answer: q.expected_answer,
+                                                            truth: q.truth ?? undefined,
                                                         })));
                                                         setLoadedSetId(s.id);
                                                         setShowSetList(false);
@@ -377,6 +384,7 @@ function NewEvalForm({
                                     const updated = [...questions];
                                     updated[i] = { ...updated[i], question: e.target.value };
                                     setQuestions(updated);
+                                    setLoadedSetId(undefined);
                                 }}
                                 className="mb-3 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
                                 placeholder="Enter your question"
@@ -392,6 +400,7 @@ function NewEvalForm({
                                             const updated = [...questions];
                                             updated[i] = { ...updated[i], expected_answer: '' };
                                             setQuestions(updated);
+                                            setLoadedSetId(undefined);
                                         }}
                                         className="text-xs text-muted-foreground transition-colors hover:text-destructive"
                                     >
@@ -405,6 +414,7 @@ function NewEvalForm({
                                     const updated = [...questions];
                                     updated[i] = { ...updated[i], expected_answer: e.target.value || null };
                                     setQuestions(updated);
+                                    setLoadedSetId(undefined);
                                 }}
                                 placeholder="Used to evaluate correctness and completeness"
                                 className="mt-1.5 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus:border-primary/50"
@@ -428,15 +438,39 @@ function NewEvalForm({
             {/* Step 3 -- Actions */}
             <div>
                 {showSaveSet && (
-                    <div className="mb-4 flex gap-2">
-                        <input
-                            type="text"
-                            value={saveSetName}
-                            onChange={(e) => setSaveSetName(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && saveSetName.trim()) {
+                    <div className="mb-4">
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={saveSetName}
+                                onChange={(e) => setSaveSetName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && saveSetName.trim()) {
+                                        const valid = questions.filter((q) => q.question.trim());
+                                        if (valid.length === 0) return;
+                                        saveSetMutation.mutate(
+                                            { name: saveSetName.trim(), questions: valid, profileId: selectedProfile || undefined },
+                                            {
+                                                onSuccess: (data) => {
+                                                    setLoadedSetId(data.id);
+                                                    setSaveSetName('');
+                                                    setShowSaveSet(false);
+                                                },
+                                            },
+                                        );
+                                    }
+                                }}
+                                placeholder="Name for this question set"
+                                className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm"
+                                autoFocus
+                            />
+                            <button
+                                onClick={() => {
+                                    if (!saveSetName.trim()) return;
+                                    const valid = questions.filter((q) => q.question.trim());
+                                    if (valid.length === 0) return;
                                     saveSetMutation.mutate(
-                                        { name: saveSetName.trim(), questions, profileId: selectedProfile || undefined },
+                                        { name: saveSetName.trim(), questions: valid, profileId: selectedProfile || undefined },
                                         {
                                             onSuccess: (data) => {
                                                 setLoadedSetId(data.id);
@@ -445,45 +479,33 @@ function NewEvalForm({
                                             },
                                         },
                                     );
-                                }
-                            }}
-                            placeholder="Name for this question set"
-                            className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm"
-                            autoFocus
-                        />
-                        <button
-                            onClick={() => {
-                                if (!saveSetName.trim()) return;
-                                saveSetMutation.mutate(
-                                    { name: saveSetName.trim(), questions, profileId: selectedProfile || undefined },
-                                    {
-                                        onSuccess: (data) => {
-                                            setLoadedSetId(data.id);
-                                            setSaveSetName('');
-                                            setShowSaveSet(false);
-                                        },
-                                    },
-                                );
-                            }}
-                            disabled={!saveSetName.trim() || saveSetMutation.isPending}
-                            className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                        >
-                            {saveSetMutation.isPending ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                                <Save className="h-3.5 w-3.5" />
-                            )}
-                            Save
-                        </button>
-                        <button
-                            onClick={() => {
-                                setShowSaveSet(false);
-                                setSaveSetName('');
-                            }}
-                            className="rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
-                        >
-                            Cancel
-                        </button>
+                                }}
+                                disabled={!saveSetName.trim() || saveSetMutation.isPending}
+                                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                            >
+                                {saveSetMutation.isPending ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                    <Save className="h-3.5 w-3.5" />
+                                )}
+                                Save
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowSaveSet(false);
+                                    setSaveSetName('');
+                                    saveSetMutation.reset();
+                                }}
+                                className="rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                        {saveSetMutation.isError && (
+                            <p className="mt-2 text-sm text-destructive">
+                                {saveSetMutation.error instanceof Error ? saveSetMutation.error.message : 'Failed to save question set'}
+                            </p>
+                        )}
                     </div>
                 )}
 
@@ -517,7 +539,7 @@ function NewEvalForm({
                         <h4 className="mb-3 text-sm font-medium">
                             Manage Dataset
                         </h4>
-                        {questions.length > 0 && !showSaveSet ? (
+                        {questions.length > 0 && !showSaveSet && !loadedSetId ? (
                             <button
                                 onClick={() => setShowSaveSet(true)}
                                 className="flex flex-col items-start gap-0.5 rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent"
@@ -530,6 +552,11 @@ function NewEvalForm({
                                     Save it to reuse later
                                 </span>
                             </button>
+                        ) : loadedSetId ? (
+                            <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+                                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                                Saved as question set
+                            </p>
                         ) : (
                             <p className="px-1 text-xs text-muted-foreground">
                                 Add questions to save as a set

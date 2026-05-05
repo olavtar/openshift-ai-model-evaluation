@@ -49,7 +49,7 @@ async def create_question_set(
         if isinstance(q, str):
             normalized.append({"question": q})
         else:
-            normalized.append(q.model_dump(exclude_none=True))
+            normalized.append(q.model_dump(mode="json", exclude_none=True))
 
     # Generate truth for questions with expected answers but no truth.
     # Use profile retrieval config when provided, otherwise RetrievalConfig defaults.
