@@ -13,6 +13,7 @@ import {
     XCircle,
     ChevronDown,
     Clock,
+    Info,
 } from 'lucide-react';
 import type { EvalResult, CoverageGaps } from '../../schemas/evaluation';
 import { formatScore, formatLatency, formatUtcDate } from '../../lib/format';
@@ -369,19 +370,30 @@ function ResultRow({ result }: { result: EvalResult }) {
                             <h3 className="mb-1.5 text-sm font-semibold">Deterministic Checks</h3>
                             <div className="space-y-1">
                                 {result.deterministic_checks.map((check, i) => {
+                                    const isManualTruth =
+                                        truth?.retrieval_truth.evidence_mode ===
+                                        'grounded_from_manual_answer';
+                                    const isChunkAlignmentInfo =
+                                        check.check_name === 'chunk_alignment' &&
+                                        !check.passed &&
+                                        isManualTruth;
                                     const hasSupportingWarning =
                                         check.passed &&
                                         check.detail?.toLowerCase().includes('supporting documents');
-                                    const Icon = check.passed
-                                        ? hasSupportingWarning
-                                            ? AlertTriangle
-                                            : CheckCircle2
-                                        : XCircle;
-                                    const iconClass = check.passed
-                                        ? hasSupportingWarning
-                                            ? 'text-amber-600 dark:text-amber-400'
-                                            : 'text-emerald-600 dark:text-emerald-400'
-                                        : 'text-rose-600 dark:text-rose-400';
+                                    const Icon = isChunkAlignmentInfo
+                                        ? Info
+                                        : check.passed
+                                          ? hasSupportingWarning
+                                              ? AlertTriangle
+                                              : CheckCircle2
+                                          : XCircle;
+                                    const iconClass = isChunkAlignmentInfo
+                                        ? 'text-slate-400 dark:text-slate-500'
+                                        : check.passed
+                                          ? hasSupportingWarning
+                                              ? 'text-amber-600 dark:text-amber-400'
+                                              : 'text-emerald-600 dark:text-emerald-400'
+                                          : 'text-rose-600 dark:text-rose-400';
                                     return (
                                         <div key={i} className="flex items-start gap-2 text-sm">
                                             <Icon

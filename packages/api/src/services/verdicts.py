@@ -92,6 +92,7 @@ def compute_question_verdict(
     profile: EvalProfile,
     deterministic_checks: list[dict] | None = None,
     coverage_gaps: dict | None = None,
+    evidence_mode: str | None = None,
 ) -> QuestionVerdict:
     """Apply profile thresholds to metric scores and produce a verdict.
 
@@ -100,6 +101,9 @@ def compute_question_verdict(
       - Exception: chunk_alignment does not force FAIL when:
         (a) document_presence passes, and
         (b) coverage gaps show generation-only misses.
+      - Exception: chunk_alignment is non-gating for manual truth
+        (evidence_mode="grounded_from_manual_answer") because query-space
+        mismatch makes chunk recall unreliable.
     - If any metric is below its critical_threshold -> FAIL
     - If any metric is below its regular threshold -> REVIEW_REQUIRED
     - If all pass -> PASS
@@ -113,6 +117,8 @@ def compute_question_verdict(
         deterministic_checks: Optional list of deterministic check result dicts,
             each with check_name, passed, detail, category.
         coverage_gaps: Optional coverage gap result dict (from detect_coverage_gaps).
+        evidence_mode: How retrieval truth was produced. chunk_alignment is
+            non-gating when "grounded_from_manual_answer".
 
     Returns:
         QuestionVerdict with verdict, fail_reasons, and metric lists.
@@ -135,16 +141,13 @@ def compute_question_verdict(
             document_presence_passed and _is_generation_only_gap(coverage_gaps)
         )
 
+        manual_truth = evidence_mode == "grounded_from_manual_answer"
+
         for check in deterministic_checks:
             name = check.get("check_name", "")
-            if (
-                generation_only_coverage
-                and name == "chunk_alignment"
-                and not check.get("passed", True)
-            ):
-                # Retrieval docs are present and missing concepts were classified as
-                # generation-only, so treat low chunk recall as non-gating.
-                continue
+            if name == "chunk_alignment" and not check.get("passed", True):
+                if generation_only_coverage or manual_truth:
+                    continue
             if name in _DETERMINISTIC_FAIL_CHECKS and not check.get("passed", True):
                 has_critical_fail = True
                 reason = _DETERMINISTIC_FAIL_REASON_MAP.get(name, f"FAIL_{name.upper()}")

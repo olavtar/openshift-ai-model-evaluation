@@ -272,24 +272,37 @@ function InlineVerdictAndFailReasons({ result }: { result: EvalResult | null | u
     );
 }
 
-function InlineDeterministicChecks({ result }: { result: EvalResult | null | undefined }) {
+function InlineDeterministicChecks({
+    result,
+    evidenceMode,
+}: {
+    result: EvalResult | null | undefined;
+    evidenceMode?: string;
+}) {
     if (!result?.deterministic_checks || result.deterministic_checks.length === 0) return null;
 
     return (
         <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
             {result.deterministic_checks.map((check, i) => {
+                const isManualTruth = evidenceMode === 'grounded_from_manual_answer';
+                const isChunkAlignmentInfo =
+                    check.check_name === 'chunk_alignment' && !check.passed && isManualTruth;
                 const hasSupportingWarning =
                     check.passed && check.detail?.toLowerCase().includes('supporting documents');
-                const Icon = check.passed
-                    ? hasSupportingWarning
-                        ? AlertTriangle
-                        : CheckCircle2
-                    : XCircle;
-                const iconClass = check.passed
-                    ? hasSupportingWarning
-                        ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-rose-600 dark:text-rose-400';
+                const Icon = isChunkAlignmentInfo
+                    ? Info
+                    : check.passed
+                      ? hasSupportingWarning
+                          ? AlertTriangle
+                          : CheckCircle2
+                      : XCircle;
+                const iconClass = isChunkAlignmentInfo
+                    ? 'text-slate-400 dark:text-slate-500'
+                    : check.passed
+                      ? hasSupportingWarning
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-rose-600 dark:text-rose-400';
                 return (
                     <span key={i} className="inline-flex items-center gap-1">
                         <Icon className={`h-3 w-3 ${iconClass}`} />
@@ -340,7 +353,7 @@ function QuestionResultPanel({ result }: { result: EvalResult | null | undefined
                 </span>
             )}
             <InlineVerdictAndFailReasons result={result} />
-            <InlineDeterministicChecks result={result} />
+            <InlineDeterministicChecks result={result} evidenceMode={truth?.retrieval_truth.evidence_mode} />
             <CoverageGapsSummary gaps={result.coverage_gaps} />
 
             {truth && (

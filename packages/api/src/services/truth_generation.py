@@ -330,15 +330,19 @@ async def ground_answer_to_corpus(
     }
     kwargs = {k: v for k, v in (retrieval_kwargs or {}).items() if k in _accepted}
     chunks = await retrieve_chunks(
-        query=expected_answer,
+        query=question,
         session=session,
         **kwargs,
     )
 
-    source_chunk_ids = [c["id"] for c in chunks if c.get("id")]
+    # Filter to chunks with actual textual overlap with the expected answer,
+    # matching the synthesis path. Without this, ALL chunks from required
+    # documents become required refs, inflating the chunk_alignment denominator.
+    aligned = _align_chunks_to_answer(expected_answer, chunks)
+    source_chunk_ids = [c["id"] for c in aligned if c.get("id")]
 
     doc_to_chunks: dict[str, list[dict]] = {}
-    for chunk in chunks:
+    for chunk in aligned:
         doc = chunk.get("source_document", "")
         if doc:
             doc_to_chunks.setdefault(doc, []).append(chunk)
@@ -350,18 +354,19 @@ async def ground_answer_to_corpus(
     supporting_docs = set(classification["supporting"])
 
     required_refs = [
-        f"chunk:{c['id']}" for c in chunks
+        f"chunk:{c['id']}" for c in aligned
         if c.get("id") and c.get("source_document", "") in required_docs
     ]
     supporting_refs = [
-        f"chunk:{c['id']}" for c in chunks
+        f"chunk:{c['id']}" for c in aligned
         if c.get("id") and c.get("source_document", "") in supporting_docs
     ]
 
     all_docs = sorted(required_docs | supporting_docs)
     logger.info(
-        "Corpus grounding: %d chunks from %d documents (%d required, %d supporting)",
+        "Corpus grounding: %d retrieved, %d aligned, %d documents (%d required, %d supporting)",
         len(chunks),
+        len(aligned),
         len(all_docs),
         len(required_docs),
         len(supporting_docs),

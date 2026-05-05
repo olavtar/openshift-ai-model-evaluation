@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: ai-quickstart-template
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: changeme
     ports:
       - "5432:5432"
     volumes:

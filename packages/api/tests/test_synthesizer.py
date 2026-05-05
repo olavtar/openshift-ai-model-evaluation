@@ -163,10 +163,10 @@ def test_parse_questions_json_fenced():
 
 
 def test_parse_questions_json_malformed():
-    """Should raise on malformed JSON."""
+    """Should raise on completely unparseable input."""
     from src.services.synthesizer import _parse_questions_json
 
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(ValueError):
         _parse_questions_json("not json at all")
 
 

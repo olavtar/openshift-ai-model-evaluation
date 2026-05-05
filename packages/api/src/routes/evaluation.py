@@ -210,7 +210,7 @@ async def _process_question(
                         sub_queries,
                     )
                     all_chunks: list[dict] = []
-                    seen_ids: set[int] = set()
+                    chunk_by_id: dict[int, int] = {}
                     # Track which sub-query produced each chunk for concept diversity
                     chunk_sub_queries: dict[int, int] = {}
                     for sq_idx, sq in enumerate(all_queries):
@@ -222,11 +222,16 @@ async def _process_question(
                         new_count = 0
                         for chunk in sq_chunks:
                             cid = chunk["id"]
-                            if cid not in seen_ids:
+                            if cid not in chunk_by_id:
+                                chunk_by_id[cid] = len(all_chunks)
                                 all_chunks.append(chunk)
-                                seen_ids.add(cid)
                                 chunk_sub_queries[cid] = sq_idx
                                 new_count += 1
+                            else:
+                                existing = all_chunks[chunk_by_id[cid]]
+                                if chunk.get("score", 0.0) > existing.get("score", 0.0):
+                                    all_chunks[chunk_by_id[cid]] = chunk
+                                    chunk_sub_queries[cid] = sq_idx
                         logger.info(
                             "Sub-query '%s': %d chunks retrieved, %d new (not seen before)",
                             sq[:80],
@@ -395,11 +400,15 @@ async def _process_question(
 
             # Compute per-question verdict if profile is loaded
             if profile and result.scores:
+                ev_mode = None
+                if q_item.truth:
+                    ev_mode = q_item.truth.retrieval_truth.evidence_mode
                 result.verdict = compute_question_verdict(
                     result.scores,
                     profile,
                     deterministic_checks=result.deterministic_checks,
                     coverage_gaps=result.coverage_gaps,
+                    evidence_mode=ev_mode,
                 )
 
         except Exception as e:

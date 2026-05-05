@@ -38,7 +38,7 @@ Compose service: `ai-quickstart-template-db` (`compose.yml` at repo root)
 - port: `5432`
 - db: `ai-quickstart-template`
 - user: `user`
-- compose password default: `password`
+- compose password default: `changeme`
 
 In application config, `DATABASE_URL` and credentials can be overridden from `.env`.
 

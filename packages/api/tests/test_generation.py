@@ -20,6 +20,22 @@ def _reset_settings():
     settings.DEBUG = original_debug
 
 
+def _mock_chat_response(answer_text: str, total_tokens: int = 110) -> MagicMock:
+    """Build a successful MaaS completion response mock."""
+    response = MagicMock()
+    response.status_code = 200
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "choices": [{"message": {"content": answer_text}}],
+        "usage": {
+            "prompt_tokens": max(total_tokens - 10, 1),
+            "completion_tokens": min(10, total_tokens),
+            "total_tokens": total_tokens,
+        },
+    }
+    return response
+
+
 def test_build_context_block_formats_chunks():
     """Should format chunks with source headers."""
     chunks = [
@@ -52,13 +68,7 @@ def test_returns_answer_on_success():
 
     settings.API_TOKEN = "test-token"
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": "The answer is 42."}}],
-        "usage": {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
-    }
+    mock_response = _mock_chat_response("The answer is 42.")
 
     import asyncio
 

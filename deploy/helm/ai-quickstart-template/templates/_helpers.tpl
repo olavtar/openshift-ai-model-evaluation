@@ -133,3 +133,35 @@ Migration selector labels
 {{ include "ai-quickstart-template.selectorLabels" . }}
 app.kubernetes.io/component: migration
 {{- end }}
+
+{{/*
+Validate required values
+*/}}
+{{- define "ai-quickstart-template.validateValues" -}}
+{{- required "A valid .Values.secrets.API_TOKEN is required. Set it with --set secrets.API_TOKEN=<your-maas-token>" .Values.secrets.API_TOKEN -}}
+{{- end }}
+
+{{/*
+Derive API base URL from route configuration
+*/}}
+{{- define "ai-quickstart-template.apiBaseUrl" -}}
+{{- if .Values.secrets.VITE_API_BASE_URL -}}
+{{- .Values.secrets.VITE_API_BASE_URL -}}
+{{- else if .Values.routes.enabled -}}
+{{- $host := "" -}}
+{{- if .Values.routes.sharedHost -}}
+{{- $host = .Values.routes.sharedHost -}}
+{{- else if .Values.routes.api.host -}}
+{{- $host = .Values.routes.api.host -}}
+{{- else if .Values.routes.ui.host -}}
+{{- $host = .Values.routes.ui.host -}}
+{{- end -}}
+{{- if $host -}}
+{{- if .Values.routes.api.tls.enabled -}}
+{{- printf "https://%s/api" $host -}}
+{{- else -}}
+{{- printf "http://%s/api" $host -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
