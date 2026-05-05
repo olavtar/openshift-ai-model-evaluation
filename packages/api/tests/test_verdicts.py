@@ -407,3 +407,67 @@ def test_verdict_none_deterministic_checks(fsi_profile):
     }
     verdict = compute_question_verdict(scores, fsi_profile, deterministic_checks=None)
     assert verdict.verdict == "PASS"
+
+
+def test_verdict_ignores_chunk_alignment_for_manual_truth(fsi_profile):
+    """Should not force FAIL on chunk_alignment when evidence_mode is manual."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "All required documents present",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "0/3",
+            "category": "retrieval",
+        },
+    ]
+
+    verdict = compute_question_verdict(
+        scores,
+        fsi_profile,
+        deterministic_checks=checks,
+        evidence_mode="grounded_from_manual_answer",
+    )
+    assert verdict.verdict == "PASS"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" not in verdict.fail_reasons
+
+
+def test_verdict_keeps_chunk_alignment_fail_for_synthesis_truth(fsi_profile):
+    """Should still FAIL on chunk_alignment when evidence_mode is synthesis."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "All required documents present",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "1/5",
+            "category": "retrieval",
+        },
+    ]
+
+    verdict = compute_question_verdict(
+        scores,
+        fsi_profile,
+        deterministic_checks=checks,
+        evidence_mode="traced_from_synthesis",
+    )
+    assert verdict.verdict == "FAIL"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" in verdict.fail_reasons

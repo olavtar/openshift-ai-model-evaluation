@@ -9,6 +9,7 @@ multiple documents, improving completeness.
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -145,10 +146,9 @@ async def decompose_query(
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
 
-        # Parse JSON array from response
-        sub_queries = json.loads(content)
-        if not isinstance(sub_queries, list) or not sub_queries:
-            logger.warning("Decomposition returned non-list or empty, using original query")
+        sub_queries = _parse_decomposition_json(content)
+        if not sub_queries:
+            logger.warning("Decomposition returned empty result, using original query")
             return [question]
 
         # Validate and clean
@@ -165,9 +165,50 @@ async def decompose_query(
         )
         return truncated
 
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse decomposition response as JSON, using original query")
-        return [question]
     except Exception as e:
         logger.warning("Query decomposition failed (%s), using original query", e)
         return [question]
+
+
+def _parse_decomposition_json(raw: str) -> list[str] | None:
+    """Parse decomposition response with fallbacks for malformed JSON."""
+    text = raw.strip()
+
+    # Strip markdown fencing
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    # Try direct parse
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list) and parsed:
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Repair trailing/missing commas
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)
+    repaired = re.sub(r'"\s*\n(\s*")', r'",\n\1', repaired)
+    try:
+        parsed = json.loads(repaired)
+        if isinstance(parsed, list) and parsed:
+            logger.info("Decomposition JSON parsed after repair")
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Last resort: extract quoted strings
+    strings = re.findall(r'"((?:[^"\\]|\\.)+)"', text)
+    if strings:
+        logger.warning(
+            "Decomposition JSON parse failed, extracted %d strings via regex", len(strings)
+        )
+        return strings
+
+    logger.warning("Failed to parse decomposition response as JSON")
+    return None

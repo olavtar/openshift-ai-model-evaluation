@@ -1,0 +1,74 @@
+{{- /*
+This project was developed with assistance from AI tools.
+*/ -}}
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+To get started:
+
+{{- if .Values.routes.enabled }}
+
+1. Access the application:
+
+   UI URL: https://{{ if .Values.routes.sharedHost }}{{ .Values.routes.sharedHost }}{{ else if .Values.routes.ui.host }}{{ .Values.routes.ui.host }}{{ else }}{{ .Values.ui.name }}-{{ .Release.Namespace }}.apps.<your-cluster-domain>{{ end }}
+
+   {{- if not .Values.routes.sharedHost }}
+   {{- if not .Values.routes.ui.host }}
+
+   NOTE: No route host was specified. The route was created but you need to find the actual URL:
+
+     oc get route {{ .Values.ui.name }}-route -n {{ .Release.Namespace }} -o jsonpath='{.spec.host}'
+
+   {{- end }}
+   {{- end }}
+
+{{- else }}
+
+1. Forward the UI service port to access the application:
+
+     oc port-forward svc/{{ .Values.ui.name }} 8080:8080 -n {{ .Release.Namespace }}
+
+   Then open http://localhost:8080 in your browser.
+
+{{- end }}
+
+2. Verify the API is healthy:
+
+{{- if .Values.routes.enabled }}
+     curl -k https://{{ if .Values.routes.sharedHost }}{{ .Values.routes.sharedHost }}{{ else if .Values.routes.api.host }}{{ .Values.routes.api.host }}{{ else if .Values.routes.ui.host }}{{ .Values.routes.ui.host }}{{ else }}{{ .Values.api.name }}-{{ .Release.Namespace }}.apps.<your-cluster-domain>{{ end }}/health/
+{{- else }}
+     oc port-forward svc/{{ .Values.api.name }} 8000:8000 -n {{ .Release.Namespace }}
+     curl http://localhost:8000/health/
+{{- end }}
+
+3. Check deployment status:
+
+     oc get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if not .Values.secrets.API_TOKEN }}
+
+WARNING: API_TOKEN is not set!
+
+The application requires a valid MaaS API token to function. Set it by upgrading the release:
+
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} \
+    --set secrets.API_TOKEN=<your-maas-token> \
+    --reuse-values
+
+{{- end }}
+
+{{- if eq .Values.secrets.POSTGRES_PASSWORD "CHANGE-ME-BEFORE-PRODUCTION" }}
+
+WARNING: Default database password detected!
+
+For production use, set a secure password:
+
+  helm upgrade {{ .Release.Name }} {{ .Chart.Name }} \
+    --set secrets.POSTGRES_PASSWORD=<secure-password> \
+    --set secrets.DATABASE_URL=postgresql+asyncpg://{{ .Values.secrets.POSTGRES_USER }}:<secure-password>@{{ .Values.database.name }}:5432/{{ .Values.secrets.POSTGRES_DB }} \
+    --reuse-values
+
+{{- end }}
+
+For more information, visit the project repository.

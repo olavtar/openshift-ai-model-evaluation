@@ -391,8 +391,7 @@ function NewEvalForm({
                             />
                             <div className="flex items-center justify-between">
                                 <label className="text-xs font-medium text-muted-foreground">
-                                    Expected Answer{' '}
-                                    <span className="font-normal">(optional)</span>
+                                    Expected Answer
                                 </label>
                                 {q.expected_answer !== undefined && q.expected_answer !== '' && (
                                     <button

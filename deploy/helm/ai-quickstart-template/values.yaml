@@ -27,17 +27,21 @@ secrets:
   # Database secrets
   POSTGRES_DB: "model-evaluation"
   POSTGRES_USER: "user"
-  POSTGRES_PASSWORD: "changeme"
+  # IMPORTANT: Change this password before deploying to production!
+  POSTGRES_PASSWORD: "CHANGE-ME-BEFORE-PRODUCTION"
 
   # API secrets
-  DATABASE_URL: "postgresql+asyncpg://user:changeme@model-evaluation-db:5432/model-evaluation"
+  # IMPORTANT: Update DATABASE_URL if you change POSTGRES_PASSWORD
+  DATABASE_URL: "postgresql+asyncpg://user:CHANGE-ME-BEFORE-PRODUCTION@model-evaluation-db:5432/model-evaluation"
   DEBUG: "false"
   ALLOWED_HOSTS: '["*"]'
 
   # API token (shared MaaS authentication)
+  # REQUIRED: You must provide a valid MaaS API token
   API_TOKEN: ""
 
   # UI secrets
+  # OPTIONAL: If not set, will be auto-derived from route configuration
   VITE_API_BASE_URL: ""
   VITE_ENVIRONMENT: "production"
 

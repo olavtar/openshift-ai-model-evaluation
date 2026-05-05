@@ -22,10 +22,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # CORS
-    ALLOWED_HOSTS: list[str] = ["http://localhost:5173"]
+    ALLOWED_HOSTS: list[str] = ["http://localhost:3000"]
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost:5432/ai-quickstart-template"
+    DATABASE_URL: str = "postgresql+asyncpg://user:changeme@localhost:5432/ai-quickstart-template"
 
     # Shared MaaS endpoint and API token (single platform)
     MAAS_ENDPOINT: str = ""

@@ -286,3 +286,51 @@ def test_cache_populated_after_success():
 
     assert BROAD_QUESTION in _decomposition_cache
     assert _decomposition_cache[BROAD_QUESTION] == ["sub-q1", "sub-q2"]
+
+
+# --- JSON repair fallback tests ---
+
+
+def test_parse_strips_markdown_fencing():
+    """Should parse JSON wrapped in markdown code fences."""
+    from src.services.query_decomposition import _parse_decomposition_json
+
+    result = _parse_decomposition_json('```json\n["q1", "q2"]\n```')
+    assert result == ["q1", "q2"]
+
+
+def test_parse_repairs_trailing_comma():
+    """Should parse JSON with trailing commas."""
+    from src.services.query_decomposition import _parse_decomposition_json
+
+    result = _parse_decomposition_json('["q1", "q2",]')
+    assert result == ["q1", "q2"]
+
+
+def test_parse_repairs_missing_comma():
+    """Should parse JSON with missing commas between lines."""
+    from src.services.query_decomposition import _parse_decomposition_json
+
+    raw = '[\n"q1"\n"q2"\n]'
+    result = _parse_decomposition_json(raw)
+    assert result is not None
+    assert len(result) >= 2
+
+
+def test_parse_regex_fallback():
+    """Should extract quoted strings when JSON is completely malformed."""
+    from src.services.query_decomposition import _parse_decomposition_json
+
+    raw = 'Here are the sub-queries:\n1. "What is Rule 6c-11?"\n2. "What are SAI requirements?"'
+    result = _parse_decomposition_json(raw)
+    assert result is not None
+    assert len(result) == 2
+    assert "Rule 6c-11" in result[0]
+
+
+def test_parse_returns_none_for_unparseable():
+    """Should return None when no strings can be extracted."""
+    from src.services.query_decomposition import _parse_decomposition_json
+
+    result = _parse_decomposition_json("no json here at all")
+    assert result is None

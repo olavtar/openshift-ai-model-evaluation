@@ -35,23 +35,24 @@ def _concept_cache_key(question: str | None, expected_answer: str) -> str:
 
 
 EXTRACT_CONCEPTS_PROMPT = """\
-You are an evaluation analyst. Break the EXPECTED ANSWER into separate, \
-individual concepts for coverage checking.
+You are an evaluation analyst. Break the EXPECTED ANSWER into its key \
+high-level concepts for coverage checking.
 
 RULES:
+- Extract BROAD, HIGH-LEVEL concepts, not fine-grained sub-facts. Each \
+concept should capture a major theme, requirement, or conclusion -- not \
+individual details, examples, or qualifications within that theme.
 - Each concept MUST be a short phrase (at most 15 words).
-- Each concept captures exactly ONE distinct fact, requirement, or obligation \
-that is explicitly stated in the expected answer.
-- Extract every distinct claim the expected answer actually contains. Do NOT \
-pad the list: if the text supports 4 concepts, return 4; if it supports 12, \
-return 12. Never invent concepts that are not grounded in the expected answer.
-- Do NOT merge multiple distinct claims into one concept.
-- Do NOT return the entire expected answer as a single concept.
-- For short gold answers, fewer concepts is correct; for long answers, more \
-is appropriate. Return at most 15 concepts. If the text has more distinct \
-facts, merge closely related ones into broader concepts.
-- Order concepts by importance: put the core requirements and key \
-distinguishing facts first, and minor details or qualifications last.
+- Return between 3 and 10 concepts. Short answers yield 3-5; long answers \
+yield 6-10. Never exceed 10.
+- Merge related facts into a single broader concept. For example, merge \
+"must file Form X" and "must file Form Y" into "must file required \
+registration forms".
+- Do NOT extract individual examples, specific thresholds, or parenthetical \
+details as separate concepts -- fold them into the broader concept they \
+support.
+- Do NOT pad the list or invent concepts not grounded in the expected answer.
+- Order concepts by importance: core requirements first, minor details last.
 
 Respond with a JSON array of short strings. No other text.
 
@@ -59,10 +60,8 @@ Example:
 EXPECTED ANSWER: "ETFs must file Form N-1A and publish daily NAV. The SAI \
 provides details on portfolio holdings and tax information."
 Output: [
-  "ETFs must file Form N-1A for registration",
-  "ETFs must publish daily net asset value (NAV)",
-  "SAI provides details on portfolio holdings",
-  "SAI provides tax information"
+  "ETFs must file registration forms and publish daily NAV",
+  "SAI provides portfolio holdings and tax information"
 ]
 
 EXPECTED ANSWER:
