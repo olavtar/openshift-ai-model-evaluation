@@ -89,11 +89,11 @@ critical_thresholds:
 # Retrieval config
 retrieval:
   top_k: 15
-  max_chunks_per_document: 4
-  rerank_depth: 35
-  document_diversity_min: 6
+  max_chunks_per_document: 6
+  rerank_depth: 50
+  document_diversity_min: 3
   keyword_search_enabled: true
   dedup_threshold: 0.85
-  diversity_relevance_threshold: 0.2
+  diversity_relevance_threshold: 0.3
   ensure_sub_query_representation: true
   sub_query_swap_score_multiplier: 1.1
