@@ -12,10 +12,19 @@ from ..core.config import settings
 logger = logging.getLogger(__name__)
 
 GENERATION_TIMEOUT = 120.0  # seconds
+
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=GENERATION_TIMEOUT)
+    return _client
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2.0  # seconds, doubles each attempt
 _DEBUG_ERROR_SNIPPET_LEN = 500
-_DEFAULT_MAX_TOKENS = 2048
+_DEFAULT_MAX_TOKENS = 1024
 _MIN_RETRY_MAX_TOKENS = 512
 _MIN_RETRY_CHUNKS = 4
 
@@ -54,6 +63,9 @@ SYSTEM_PROMPT = (
     "Answer using the provided context and ONLY the provided context.\n"
     "- Synthesize a comprehensive overview that covers the main themes and topics "
     "from the context. Do not merely enumerate individual line items from documents.\n"
+    "- When the question asks for requirements, disclosures, filings, or a regulatory "
+    "framework, organize by major categories (who/what applies, primary documents, "
+    "core disclosure themes, ongoing obligations) before minor exceptions or footnotes.\n"
     "- Do NOT add any information, citations, item numbers, rule numbers, section "
     "references, or form names from your own knowledge.\n"
     "- If a specific reference does not appear in the context text, do not include it. "
@@ -86,6 +98,7 @@ def _build_generation_payload(
     model_name: str,
     system_prompt: str | None,
     attempt: int,
+    base_max_tokens: int | None = None,
 ) -> tuple[dict, int, int]:
     """Build request payload, shrinking context and max_tokens on retries."""
     if attempt <= 0:
@@ -98,7 +111,8 @@ def _build_generation_payload(
 
     context = _build_context_block(prompt_chunks)
     user_message = f"Context:\n{context}\n\nQuestion: {question}"
-    max_tokens = max(_MIN_RETRY_MAX_TOKENS, _DEFAULT_MAX_TOKENS // (2**attempt))
+    cap = base_max_tokens if base_max_tokens is not None else _DEFAULT_MAX_TOKENS
+    max_tokens = max(_MIN_RETRY_MAX_TOKENS, cap // (2**attempt))
     payload = {
         "model": model_name,
         "messages": [
@@ -116,6 +130,7 @@ async def generate_answer(
     chunks: list[dict],
     model_name: str,
     system_prompt: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Generate an answer using the specified model with retrieved context.
 
@@ -125,6 +140,8 @@ async def generate_answer(
         model_name: Name of the model to use (e.g. granite-3.1-8b-instruct).
         system_prompt: Optional override for the system prompt. When provided
             (e.g. from an evaluation profile), replaces the default prompt.
+        max_tokens: Optional cap on completion tokens (defaults to a conservative
+            baseline; profiles may set a higher limit for structured regulatory answers).
 
     Returns:
         Dict with 'answer', 'model', 'usage' keys.
@@ -154,6 +171,7 @@ async def generate_answer(
             model_name=model_name,
             system_prompt=system_prompt,
             attempt=attempt,
+            base_max_tokens=max_tokens,
         )
         if attempt > 0:
             logger.info(
@@ -165,9 +183,9 @@ async def generate_answer(
                 max_tokens,
             )
         try:
-            async with httpx.AsyncClient(timeout=GENERATION_TIMEOUT) as client:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
+            client = _get_client()
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
 
             data = response.json()
             answer = data["choices"][0]["message"]["content"]

@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 
 DECOMPOSITION_TIMEOUT = 30.0  # seconds
 
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=DECOMPOSITION_TIMEOUT)
+    return _client
+
 # In-memory cache for decomposition results (avoids re-calling LLM for the
 # same question across model A and model B eval runs, or rerun scenarios).
 _decomposition_cache: dict[str, list[str]] = {}
@@ -35,40 +44,56 @@ def _cache_decomposition(question: str, sub_queries: list[str]) -> None:
         oldest = next(iter(_decomposition_cache))
         del _decomposition_cache[oldest]
     _decomposition_cache[question] = sub_queries
-MAX_SUB_QUERIES = 7
+MAX_SUB_QUERIES = 5
 
 # Words per question below which decomposition is skipped (narrow questions)
 _MIN_WORDS_FOR_DECOMPOSITION = 8
 
-# Broad-question signal words that suggest decomposition would help
+# Survey-level phrases that strongly indicate a broad, multi-topic question.
+# Single common words like "types", "requirements", "what are" trigger on
+# almost every regulatory question and cause unnecessary decomposition.
+_SURVEY_PHRASES = [
+    "overview of", "summarize all", "summarize the", "comprehensive overview",
+    "compare and contrast", "key requirements for", "main requirements for",
+    "what are the key", "what are the main", "describe the framework",
+    "explain the framework", "all requirements", "various aspects",
+    "multiple areas", "across all",
+    "disclosure requirements", "reporting requirements", "compliance requirements",
+    "regulatory requirements", "filing requirements", "what requirements",
+]
+
+# Weaker signals -- require at least 2 to trigger decomposition
 _BROAD_SIGNALS = {
-    "key", "main", "overview", "requirements", "framework", "comprehensive",
-    "summary", "compare", "differences", "explain", "describe", "what are",
-    "how do", "regulatory", "compliance", "obligations", "all", "various",
-    "multiple", "different", "types", "categories",
+    "key", "main", "overview", "framework", "comprehensive",
+    "summary", "compare", "differences", "various", "multiple",
+    "categories",
 }
 
 DECOMPOSITION_PROMPT = """\
 You are a query decomposition assistant for a regulatory document retrieval system.
 
-Given a broad question, break it into {max_sub_queries} specific sub-questions that:
+Given a broad question, break it into at most {max_sub_queries} specific sub-questions that:
 1. Each target a DISTINCT regulatory concept, document type, or compliance area
 2. Avoid overlapping semantic intent -- each sub-question should retrieve from \
 a different part of the document corpus
 3. Together cover the full scope of the original question
 4. Are self-contained (each can be understood without the others)
 
+When the question asks about disclosure requirements, filings, prospectuses, registration \
+statements, or what must be included in offerings (including ETFs or registered funds), \
+include separate sub-questions that target: primary registration/prospectus package vs \
+supplementary disclosure (e.g. SAI-style detail); core prospectus themes (objectives, risks, \
+fees, performance, purchase/sale, tax) only as retrieval hooks if relevant; ETF-specific \
+trading/NAV/creation-redemption disclosures if relevant; exemptive rule or website \
+transparency obligations if relevant; ongoing periodic reporting forms if relevant.
+
 Respond with a JSON array of strings. No other text.
 
 Example:
 Question: "What are the key requirements for ETF regulatory compliance?"
-Output: ["What registration and prospectus requirements apply to ETFs under Form N-1A?", \
-"What disclosures are required in an ETF's Statement of Additional Information (SAI)?", \
-"How do creation and redemption mechanisms work for ETFs, including authorized participants and creation units?", \
-"What periodic reporting requirements apply to ETFs under Forms N-CSR, N-PORT, and N-CEN?", \
-"What are the provisions of Rule 6c-11 regarding ETF transparency and website disclosures?", \
-"What are the requirements for ETF net asset value (NAV) calculation and portfolio holdings disclosure?", \
-"What premium/discount and bid-ask spread disclosure requirements apply to ETFs?"]
+Output: ["What registration, prospectus, and disclosure requirements apply to ETFs?", \
+"How do creation and redemption mechanisms work for ETFs, including authorized participants?", \
+"What periodic reporting and transparency requirements apply to ETFs?"]
 """
 
 
@@ -105,10 +130,15 @@ async def decompose_query(
         return [question]
 
     question_lower = question.lower()
-    has_broad_signal = any(signal in question_lower for signal in _BROAD_SIGNALS)
-    if not has_broad_signal:
-        logger.info("No broad-question signals detected, skipping decomposition")
-        return [question]
+    has_survey_phrase = any(phrase in question_lower for phrase in _SURVEY_PHRASES)
+    if not has_survey_phrase:
+        broad_count = sum(1 for signal in _BROAD_SIGNALS if signal in question_lower)
+        if broad_count < 2:
+            logger.info(
+                "No survey phrase and only %d broad signal(s), skipping decomposition",
+                broad_count,
+            )
+            return [question]
 
     resolved_model = model_name or settings.resolved_judge_model_name
     if not resolved_model:
@@ -139,9 +169,9 @@ async def decompose_query(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=DECOMPOSITION_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+        client = _get_client()
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
 
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()

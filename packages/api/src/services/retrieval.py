@@ -13,11 +13,51 @@ from db import Chunk, Document
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import settings
 from .embedding import generate_embeddings
 
 logger = logging.getLogger(__name__)
 
 TOP_K = 5  # default number of chunks to retrieve
+
+
+def compute_search_depth(
+    rerank_depth: int,
+    diversity_min: int,
+    doc_count: int,
+    max_search_depth: int | None = None,
+) -> int:
+    """Size of the vector/keyword candidate pool before RRF and diversity filtering.
+
+    When ``diversity_min > 1``, the pool widens to ``max(rerank_depth,
+    doc_count * rerank_depth)`` so smaller documents are not starved by one
+    large file. That product can grow without bound as the corpus grows; the
+    cap keeps DB and RRF work predictable (latency).
+
+    Args:
+        rerank_depth: Profile baseline depth (RRF candidate budget).
+        diversity_min: When <= 1, only ``rerank_depth`` is used.
+        doc_count: Number of ready, non-deleted documents in the corpus.
+        max_search_depth: Upper bound (defaults to ``settings.RETRIEVAL_MAX_SEARCH_DEPTH``).
+
+    Returns:
+        Effective LIMIT for vector and keyword retrieval passes.
+    """
+    cap = max_search_depth if max_search_depth is not None else settings.RETRIEVAL_MAX_SEARCH_DEPTH
+    if diversity_min <= 1:
+        return rerank_depth
+
+    raw = max(rerank_depth, doc_count * rerank_depth)
+    if raw > cap:
+        logger.info(
+            "Retrieval search_depth capped: uncapped=%d (docs=%d, rerank_depth=%d) -> %d",
+            raw,
+            doc_count,
+            rerank_depth,
+            cap,
+        )
+        return cap
+    return raw
 
 
 async def retrieve_chunks(
@@ -61,11 +101,11 @@ async def retrieve_chunks(
         # Widen the candidate pool so large documents cannot starve the
         # diversity filter.  When diversity_min > 1, pull enough candidates
         # that even a corpus dominated by one giant document still surfaces
-        # chunks from smaller ones.
-        search_depth = rerank_depth
+        # chunks from smaller ones. Capped via compute_search_depth for latency.
+        doc_count = 1
         if diversity_min > 1:
             doc_count = await _count_ready_documents(session)
-            search_depth = max(rerank_depth, doc_count * rerank_depth)
+        search_depth = compute_search_depth(rerank_depth, diversity_min, doc_count)
         vector_results = await _vector_search(result.vectors[0], session, search_depth)
     else:
         logger.info("No query embedding available -- falling back to recent chunks")

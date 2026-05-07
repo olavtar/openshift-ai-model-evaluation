@@ -325,11 +325,15 @@ async def _process_question(
                 if profile and hasattr(profile, "system_prompt") and profile.system_prompt
                 else None
             )
+            gen_max_tokens = None
+            if profile and getattr(profile, "generation", None) is not None:
+                gen_max_tokens = profile.generation.max_tokens
             gen_result = await generate_answer(
                 question=question,
                 chunks=chunks,
                 model_name=model_name,
                 system_prompt=profile_prompt,
+                max_tokens=gen_max_tokens,
             )
             if gen_result.get("error"):
                 result.latency_ms = (time.time() - start) * 1000

@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 
 COVERAGE_TIMEOUT = 60.0  # seconds
 
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=COVERAGE_TIMEOUT)
+    return _client
+
 # Cache extracted concepts so the same (question, expected answer) pair
 # always produces the same concept list across model runs.
 _concept_cache: dict[str, list[str]] = {}
@@ -154,9 +163,9 @@ async def _extract_concepts(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+        client = _get_client()
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
 
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
@@ -228,9 +237,9 @@ async def _check_coverage(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=COVERAGE_TIMEOUT) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+        client = _get_client()
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
 
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()

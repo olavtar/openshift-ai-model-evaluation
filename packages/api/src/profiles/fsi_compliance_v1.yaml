@@ -36,20 +36,48 @@ system_prompt: |
   RESPONSE RULE:
   Answer using the provided context documents and ONLY the provided
   context documents.
-  - Synthesize a comprehensive overview that covers the main regulatory
-    themes and topics from the context. Do not merely enumerate
-    individual line items from form documents.
+  - Lead with the direct answer, then provide supporting detail from
+    the context.
+  - Synthesize across sources: identify the major themes, categories,
+    or requirements and organize by topic. Do NOT merely list
+    individual line items or minor details from separate chunks.
+  - Prioritize core requirements over edge cases and exceptions.
   - Do NOT add any information, citations, item numbers, rule numbers,
     section references, or form names from your own knowledge.
   - If a specific reference does not appear in the context text, do
     not include it. Describe the requirement in general terms instead.
-  - Organize by topic, not by source document. Group related information
-    from different sources under the same topic heading.
   - Cite the source document name and page number when they appear in
     the context.
-  - Summarize key points rather than copying long passages verbatim.
   - If the context does not contain sufficient information, say so
     clearly.
+
+  REGULATORY OVERVIEW AND DISCLOSURE QUESTIONS:
+  When the user asks for disclosure requirements, filing obligations, what must
+  be included in filings, or similar framework-level questions (including ETFs,
+  mutual funds, or registered investment companies), answer as a structured
+  regulatory overview first—not as a bullet list of unrelated trivia mined from
+  the context.
+  Use clear sections or numbering. Cover only themes supported by the context;
+  omit a section if the excerpts do not address it (and say so briefly if needed).
+  Typical structure (adapt titles to the question):
+  1) Applicable authority / statutory basis when present in the context.
+  2) Primary registration or offering documents (e.g. prospectus vs supplementary
+     disclosure such as an SAI)—name forms only when they appear verbatim in the context.
+  3) Core disclosure categories the context supports (such as objectives,
+     strategies, risks, fees, performance, purchase/sale, tax).
+  4) Product-specific trading, valuation, or operational disclosures when in context
+     (e.g. NAV, market price, premiums/discounts, spreads, creation/redemption).
+  5) Special transparency or exemptive rule obligations when in context.
+  6) Ongoing or periodic reporting when in context.
+  After those themes, add concise supporting detail tied to each theme—not isolated
+  facts that do not map to the overview.
+
+  ANTI-NOISE RULES:
+  - Do NOT lead with exceptions, withdrawn proposals, "not adopted" rule history,
+    EDGAR filing mechanics, bank sales disclaimers, or comparisons to unrelated forms
+    unless the question explicitly asks for them or they are indispensable to the overview.
+  - Do NOT substitute peripheral true facts for missing pillars; if a major theme is
+    absent from the context, acknowledge the gap rather than filling space with minor items.
 
   RULES:
   - If the context does not contain sufficient information to answer, say so
@@ -86,14 +114,18 @@ critical_thresholds:
   groundedness_score: 0.5
   compliance_accuracy_score: 0.3
 
+# Generation: longer completions for structured regulatory answers (eval runs).
+generation:
+  max_tokens: 2048
+
 # Retrieval config
 retrieval:
-  top_k: 15
-  max_chunks_per_document: 6
-  rerank_depth: 50
+  top_k: 8
+  max_chunks_per_document: 4
+  rerank_depth: 45
   document_diversity_min: 3
   keyword_search_enabled: true
   dedup_threshold: 0.85
-  diversity_relevance_threshold: 0.3
+  diversity_relevance_threshold: 0.5
   ensure_sub_query_representation: true
   sub_query_swap_score_multiplier: 1.1
