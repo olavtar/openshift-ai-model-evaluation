@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.generation import _build_context_block, generate_answer
+from src.services.generation import _build_context_block, _build_generation_payload, generate_answer
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,19 @@ def _mock_chat_response(answer_text: str, total_tokens: int = 110) -> MagicMock:
         },
     }
     return response
+
+
+def test_build_generation_payload_respects_custom_max_tokens():
+    """Profile-driven answers should pass through a higher completion budget."""
+    payload, _, max_tokens = _build_generation_payload(
+        question="What must be disclosed?",
+        chunks=[{"source_document": "doc.pdf", "page_number": "1", "text": "context"}],
+        model_name="granite-test",
+        system_prompt=None,
+        attempt=0,
+        base_max_tokens=2048,
+    )
+    assert payload["max_tokens"] == max_tokens == 2048
 
 
 def test_build_context_block_formats_chunks():
@@ -84,8 +97,12 @@ def test_returns_answer_on_success():
                 "What is the meaning?",
                 [{"source_document": "doc.pdf", "page_number": "1", "text": "context"}],
                 "granite-3.1-8b-instruct",
+                max_tokens=2048,
             )
         )
+
+        call_kw = mock_client.post.call_args
+        assert call_kw[1]["json"]["max_tokens"] == 2048
 
     assert result["answer"] == "The answer is 42."
     assert result["model"] == "granite-3.1-8b-instruct"

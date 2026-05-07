@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 _PROFILES_DIR = Path(__file__).resolve().parent.parent / "profiles"
 
 
+class GenerationConfig(BaseModel):
+    """Generation parameters driven by the evaluation profile."""
+
+    # When set, overrides default max output tokens for RAG answers (chat completions).
+    max_tokens: int | None = Field(default=None, ge=256, le=8192)
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval parameters driven by the evaluation profile."""
 
@@ -42,6 +49,7 @@ class EvalProfile(BaseModel):
     thresholds: dict[str, float] = Field(default_factory=dict)
     critical_thresholds: dict[str, float] = Field(default_factory=dict)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
 
 
 def load_profile(profile_id: str) -> EvalProfile:

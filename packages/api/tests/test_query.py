@@ -91,32 +91,32 @@ async def test_generate_answer_uses_custom_system_prompt():
 
     custom_prompt = "You are an FSI compliance specialist."
 
-    with patch("src.services.generation.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "test answer"}}],
-            "usage": None,
+    mock_client = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": "test answer"}}],
+        "usage": None,
+    }
+    mock_response.raise_for_status = lambda: None
+    mock_client.post = AsyncMock(return_value=mock_response)
+
+    with (
+        patch("src.services.generation._get_client", return_value=mock_client),
+        patch("src.services.generation.settings") as mock_settings,
+    ):
+        mock_settings.get_model_config.return_value = {
+            "endpoint": "https://maas.example.com",
+            "token": "test-token",
         }
-        mock_response.raise_for_status = lambda: None
-        mock_client.post.return_value = mock_response
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_settings.DEBUG = False
 
-        with patch("src.services.generation.settings") as mock_settings:
-            mock_settings.get_model_config.return_value = {
-                "endpoint": "https://maas.example.com",
-                "token": "test-token",
-            }
-            mock_settings.DEBUG = False
+        await generate_answer("What?", [], "test-model", system_prompt=custom_prompt)
 
-            await generate_answer("What?", [], "test-model", system_prompt=custom_prompt)
-
-        call_kwargs = mock_client.post.call_args
-        payload = call_kwargs[1]["json"]
-        assert payload["messages"][0]["content"] == custom_prompt
-        assert payload["messages"][0]["content"] != SYSTEM_PROMPT
+    call_kwargs = mock_client.post.call_args
+    payload = call_kwargs[1]["json"]
+    assert payload["messages"][0]["content"] == custom_prompt
+    assert payload["messages"][0]["content"] != SYSTEM_PROMPT
 
 
 def test_query_validates_empty_question(client):

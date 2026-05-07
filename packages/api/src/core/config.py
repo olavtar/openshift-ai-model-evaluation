@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     S3_ACCESS_KEY: str = ""
     S3_SECRET_KEY: str = ""
 
+    # Retrieval: max vector/keyword candidate pool per query (see retrieval.compute_search_depth).
+    # Caps ``doc_count * rerank_depth`` when diversity is enabled to avoid huge DB LIMITs.
+    RETRIEVAL_MAX_SEARCH_DEPTH: int = 400
+
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE,
         env_file_encoding="utf-8",

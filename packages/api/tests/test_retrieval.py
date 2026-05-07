@@ -12,6 +12,7 @@ from src.services.retrieval import (
     _deduplicate_chunks,
     _fallback_search,
     _reciprocal_rank_fusion,
+    compute_search_depth,
     retrieve_chunks,
 )
 
@@ -143,6 +144,68 @@ def test_diversity_promotes_underrepresented_docs():
 def test_diversity_returns_empty_for_empty_input():
     """Should return empty list for no chunks."""
     assert _apply_diversity([], top_k=5, max_per_doc=2, diversity_min=3) == []
+
+
+def test_compute_search_depth_no_diversity():
+    """Should use rerank_depth only when diversity is disabled."""
+    assert compute_search_depth(50, 1, 100, max_search_depth=400) == 50
+    assert compute_search_depth(35, 1, 20, max_search_depth=400) == 35
+
+
+def test_compute_search_depth_uncapped_below_limit():
+    """Should use doc_count * rerank_depth when under cap."""
+    assert compute_search_depth(50, 3, 5, max_search_depth=400) == 250
+
+
+def test_compute_search_depth_applies_cap():
+    """Should cap huge doc_count * rerank_depth products."""
+    assert compute_search_depth(50, 3, 30, max_search_depth=400) == 400
+
+
+def test_retrieve_chunks_passes_capped_limit_to_vector_search(mock_session):
+    """Should cap DB LIMIT when diversity widens the candidate pool."""
+    import asyncio
+
+    captured: dict[str, int] = {}
+
+    async def capture_vector_search(_emb, _session, limit):
+        captured["limit"] = limit
+        return [_chunk(1, doc="a.pdf")]
+
+    with (
+        patch(
+            "src.services.retrieval.generate_embeddings",
+            new_callable=AsyncMock,
+            return_value=EmbeddingsResult(vectors=[[0.1, 0.2]], error=None),
+        ),
+        patch(
+            "src.services.retrieval._vector_search",
+            new_callable=AsyncMock,
+            side_effect=capture_vector_search,
+        ),
+        patch(
+            "src.services.retrieval._keyword_search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "src.services.retrieval._count_ready_documents",
+            new_callable=AsyncMock,
+            return_value=30,
+        ),
+    ):
+        asyncio.run(
+            retrieve_chunks(
+                "test query",
+                mock_session,
+                top_k=5,
+                rerank_depth=50,
+                diversity_min=3,
+            )
+        )
+
+    # uncapped would be max(50, 30*50)=1500; default cap 400
+    assert captured.get("limit") == 400
 
 
 def test_retrieve_chunks_hybrid_path(mock_session):

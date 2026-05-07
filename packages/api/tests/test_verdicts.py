@@ -3,7 +3,13 @@
 
 import pytest
 
-from src.services.profiles import EvalProfile, RetrievalConfig, list_profiles, load_profile
+from src.services.profiles import (
+    EvalProfile,
+    GenerationConfig,
+    RetrievalConfig,
+    list_profiles,
+    load_profile,
+)
 from src.services.verdicts import compute_question_verdict, compute_run_verdict
 
 
@@ -40,7 +46,9 @@ def test_load_fsi_compliance_profile():
     assert "groundedness_score" in profile.thresholds
     assert "groundedness_score" in profile.critical_thresholds
     assert isinstance(profile.retrieval, RetrievalConfig)
-    assert profile.retrieval.top_k == 15
+    assert profile.retrieval.top_k == 8
+    assert isinstance(profile.generation, GenerationConfig)
+    assert profile.generation.max_tokens == 2048
 
 
 def test_fsi_profile_has_system_prompt():
