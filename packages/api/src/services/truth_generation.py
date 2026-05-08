@@ -17,7 +17,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import settings
-from ..schemas.truth import AnswerTruth, RetrievalTruth, TruthMetadata, TruthPayload
+from ..schemas.truth import AnswerTruth, EvidenceMode, RetrievalTruth, TruthMetadata, TruthPayload
 from .coverage import COVERAGE_TIMEOUT, EXTRACT_CONCEPTS_PROMPT, _strip_markdown_fencing
 from .retrieval import retrieve_chunks
 
@@ -302,6 +302,7 @@ async def ground_answer_to_corpus(
     session: AsyncSession,
     model_name: str,
     retrieval_kwargs: dict | None = None,
+    evidence_mode: EvidenceMode = "grounded_from_manual_answer",
 ) -> tuple[RetrievalTruth, list[int]]:
     """Ground an expected answer against the uploaded corpus.
 
@@ -315,6 +316,7 @@ async def ground_answer_to_corpus(
         session: Database session for retrieval queries.
         model_name: Judge model for document classification.
         retrieval_kwargs: Profile-driven retrieval parameters (top_k, etc.).
+        evidence_mode: Provenance label to store on retrieval truth.
 
     Returns:
         Tuple of (RetrievalTruth with classification, source_chunk_ids).
@@ -377,7 +379,7 @@ async def ground_answer_to_corpus(
         expected_chunk_refs=required_refs,
         supporting_documents=sorted(supporting_docs),
         supporting_chunk_refs=supporting_refs,
-        evidence_mode="grounded_from_manual_answer",
+        evidence_mode=evidence_mode,
     ), source_chunk_ids
 
 
@@ -450,12 +452,16 @@ async def generate_truth_from_synthesis(
     expected_answer: str,
     source_chunks: list[dict],
     model_name: str,
+    session: AsyncSession | None = None,
+    retrieval_kwargs: dict | None = None,
 ) -> TruthPayload:
     """Generate a complete truth payload for a synthesized question.
 
-    Aligns source chunks to the expected answer so that each question's
-    truth only references the chunks that actually contributed to its
-    answer, rather than all synthesis chunks.
+    When a DB session is provided, grounds generated truth through the
+    same retrieval pipeline used by evaluation. This avoids freezing exact
+    chunk requirements from the broad synthesis prompt that may not be
+    reachable from the final generated question. Without a session, falls
+    back to tracing source chunks from the synthesis context.
 
     Args:
         question: The synthesized question text.
@@ -463,11 +469,29 @@ async def generate_truth_from_synthesis(
         source_chunks: Chunks used during synthesis, each with 'id',
             'text', and 'source_document' keys.
         model_name: Judge model for concept extraction.
+        session: Optional DB session used to ground generated truth via retrieval.
+        retrieval_kwargs: Profile-driven retrieval parameters.
 
     Returns:
-        Complete TruthPayload with traced retrieval truth.
+        Complete TruthPayload with generated-answer retrieval truth.
     """
     answer_truth = await extract_answer_truth(expected_answer, model_name)
+    if session is not None:
+        retrieval_truth, source_chunk_ids = await ground_answer_to_corpus(
+            question,
+            expected_answer,
+            session,
+            model_name,
+            retrieval_kwargs=retrieval_kwargs,
+            evidence_mode="grounded_from_synthesis",
+        )
+        metadata = build_truth_metadata(model_name, source_chunk_ids)
+        return TruthPayload(
+            answer_truth=answer_truth,
+            retrieval_truth=retrieval_truth,
+            metadata=metadata,
+        )
+
     aligned_chunks = _align_chunks_to_answer(expected_answer, source_chunks)
     retrieval_truth = await build_retrieval_truth_from_synthesis(
         question, expected_answer, aligned_chunks, model_name

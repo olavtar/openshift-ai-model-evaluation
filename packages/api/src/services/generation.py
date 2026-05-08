@@ -24,7 +24,7 @@ def _get_client() -> httpx.AsyncClient:
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2.0  # seconds, doubles each attempt
 _DEBUG_ERROR_SNIPPET_LEN = 500
-_DEFAULT_MAX_TOKENS = 1024
+_DEFAULT_MAX_TOKENS = 2048
 _MIN_RETRY_MAX_TOKENS = 512
 _MIN_RETRY_CHUNKS = 4
 
@@ -61,11 +61,7 @@ SYSTEM_PROMPT = (
     "enough information to answer the question, say so clearly.\n\n"
     "RESPONSE RULE:\n"
     "Answer using the provided context and ONLY the provided context.\n"
-    "- Synthesize a comprehensive overview that covers the main themes and topics "
-    "from the context. Do not merely enumerate individual line items from documents.\n"
-    "- When the question asks for requirements, disclosures, filings, or a regulatory "
-    "framework, organize by major categories (who/what applies, primary documents, "
-    "core disclosure themes, ongoing obligations) before minor exceptions or footnotes.\n"
+    "- Lead with the direct answer, then provide supporting detail.\n"
     "- Do NOT add any information, citations, item numbers, rule numbers, section "
     "references, or form names from your own knowledge.\n"
     "- If a specific reference does not appear in the context text, do not include it. "
@@ -123,6 +119,31 @@ def _build_generation_payload(
         "max_tokens": max_tokens,
     }
     return payload, len(prompt_chunks), max_tokens
+
+
+def _strip_reasoning_blocks(answer: str) -> str:
+    """Remove model-visible reasoning blocks from final answers.
+
+    Strips paired short/long ``think`` / ``redacted_thinking`` blocks and
+    drops any text before the last orphan closing tag so automated metrics
+    score only the answer body.
+    """
+    text = (answer or "").strip()
+
+    for pattern in (
+        r"<think\b[^>]*>.*?</think>\s*",
+        r"<redacted_thinking\b[^>]*>.*?</redacted_thinking>\s*",
+    ):
+        text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    lower = text.lower()
+    for closing in ("</think>", "</redacted_thinking>"):
+        if closing in lower:
+            end = lower.rfind(closing) + len(closing)
+            text = text[end:]
+            lower = text.lower()
+
+    return text.strip()
 
 
 async def generate_answer(
@@ -189,8 +210,7 @@ async def generate_answer(
 
             data = response.json()
             answer = data["choices"][0]["message"]["content"]
-            # Strip <think>...</think> reasoning blocks that some models emit
-            answer = re.sub(r"<think>.*?</think>\s*", "", answer, flags=re.DOTALL).strip()
+            answer = _strip_reasoning_blocks(answer)
             usage = data.get("usage")
 
             return {

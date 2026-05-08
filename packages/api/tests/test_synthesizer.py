@@ -275,7 +275,8 @@ def test_synthesize_returns_truth_when_judge_configured(client, _setup_db):
 
     concepts_json = '["AI simulates human intelligence"]'
 
-    # Two HTTP calls per question: 1 synthesis + 1 concept extraction
+    # Two HTTP calls per question: 1 synthesis + 1 concept extraction.
+    # Retrieval grounding and document classification are patched below.
     synth_response = MagicMock()
     synth_response.raise_for_status = MagicMock()
     synth_response.json.return_value = {
@@ -311,6 +312,23 @@ def test_synthesize_returns_truth_when_judge_configured(client, _setup_db):
     with (
         patch("src.services.synthesizer.httpx.AsyncClient", mock_ac),
         patch("src.services.truth_generation.httpx.AsyncClient", mock_ac),
+        patch(
+            "src.services.truth_generation.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=[
+                {
+                    "id": 1,
+                    "source_document": "test.pdf",
+                    "text": "AI is the simulation of human intelligence.",
+                    "score": 0.9,
+                }
+            ],
+        ),
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value={"required": ["test.pdf"], "supporting": []},
+        ),
     ):
         response = client.post(
             "/evaluations/synthesize",
@@ -325,7 +343,7 @@ def test_synthesize_returns_truth_when_judge_configured(client, _setup_db):
     assert "answer_truth" in q["truth"]
     assert "retrieval_truth" in q["truth"]
     assert "metadata" in q["truth"]
-    assert q["truth"]["retrieval_truth"]["evidence_mode"] == "traced_from_synthesis"
+    assert q["truth"]["retrieval_truth"]["evidence_mode"] == "grounded_from_synthesis"
     assert len(q["truth"]["answer_truth"]["required_concepts"]) > 0
 
     monkeypatch.undo()

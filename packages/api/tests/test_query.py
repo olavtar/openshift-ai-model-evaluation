@@ -259,6 +259,95 @@ def test_query_passes_through_when_safe(client):
     assert len(data["sources"]) == 1
 
 
+# --- Profile-based retrieval config tests ---
+
+
+def test_query_loads_profile_retrieval_config(client):
+    """Should pass profile retrieval kwargs (top_k, diversity, etc.) to retrieve_chunks."""
+    model_a = settings.MODEL_A_NAME
+    with (
+        patch("src.routes.query.retrieve_chunks", return_value=[]) as mock_retrieve,
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={"answer": "test", "model": model_a, "usage": None},
+        ),
+    ):
+        response = client.post(
+            "/query/",
+            json={"question": "What are the disclosure requirements?"},
+        )
+
+    assert response.status_code == 200
+    call_kwargs = mock_retrieve.call_args[1]
+    assert call_kwargs["top_k"] == 8
+    assert call_kwargs["keyword_enabled"] is True
+    assert call_kwargs["rerank_depth"] == 45
+    assert call_kwargs["diversity_min"] == 3
+
+
+def test_query_passes_profile_system_prompt_to_generation(client):
+    """Should pass FSI profile system prompt to generate_answer."""
+    model_a = settings.MODEL_A_NAME
+    with (
+        patch("src.routes.query.retrieve_chunks", return_value=[]),
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={"answer": "test", "model": model_a, "usage": None},
+        ) as mock_gen,
+    ):
+        client.post(
+            "/query/",
+            json={"question": "What are the rules?"},
+        )
+
+    call_kwargs = mock_gen.call_args[1]
+    assert call_kwargs["system_prompt"] is not None
+    assert "compliance" in call_kwargs["system_prompt"].lower()
+
+
+def test_query_explicit_top_k_overrides_profile(client):
+    """Should use request top_k when explicitly provided, not the profile default."""
+    model_a = settings.MODEL_A_NAME
+    with (
+        patch("src.routes.query.retrieve_chunks", return_value=[]) as mock_retrieve,
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={"answer": "test", "model": model_a, "usage": None},
+        ),
+    ):
+        response = client.post(
+            "/query/",
+            json={"question": "Simple question?", "top_k": 3},
+        )
+
+    assert response.status_code == 200
+    assert mock_retrieve.call_args[1]["top_k"] == 3
+
+
+def test_query_degrades_gracefully_when_profile_missing(client):
+    """Should still work when the profile file is missing."""
+    model_a = settings.MODEL_A_NAME
+    with (
+        patch(
+            "src.routes.query.load_profile",
+            side_effect=FileNotFoundError("not found"),
+        ),
+        patch("src.routes.query.retrieve_chunks", return_value=[]) as mock_retrieve,
+        patch(
+            "src.routes.query.generate_answer",
+            return_value={"answer": "test", "model": model_a, "usage": None},
+        ) as mock_gen,
+    ):
+        response = client.post(
+            "/query/",
+            json={"question": "What is this?"},
+        )
+
+    assert response.status_code == 200
+    assert mock_gen.call_args[1]["system_prompt"] is None
+    assert "top_k" not in mock_retrieve.call_args[1]
+
+
 # --- Debug retrieval endpoint tests ---
 
 

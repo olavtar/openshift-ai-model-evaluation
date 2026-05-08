@@ -67,16 +67,60 @@ def test_retrieve_chunks_uses_fallback_when_no_embeddings(mock_session):
 
     import asyncio
 
-    with patch(
-        "src.services.retrieval.generate_embeddings",
-        new_callable=AsyncMock,
-        return_value=EmbeddingsResult(vectors=None, error=None),
+    with (
+        patch(
+            "src.services.retrieval.generate_embeddings",
+            new_callable=AsyncMock,
+            return_value=EmbeddingsResult(vectors=None, error=None),
+        ),
+        patch(
+            "src.services.retrieval._keyword_search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
-        result = asyncio.run(retrieve_chunks("test query", mock_session))
+        # diversity_min=1 skips doc-count query so execute maps to fallback only
+        result = asyncio.run(
+            retrieve_chunks("test query", mock_session, diversity_min=1),
+        )
 
     assert len(result) == 1
     assert result[0]["text"] == "fallback chunk"
     assert result[0]["score"] == 0.0
+
+
+def test_retrieve_chunks_keyword_only_when_no_embeddings(mock_session):
+    """Without embeddings, keyword hits should be used (query-specific), not recent-chunks fallback."""
+    import asyncio
+
+    kw_hit = {
+        "id": 42,
+        "text": "ETF basket rule text",
+        "source_document": "rule.pdf",
+        "page_number": "3",
+        "section_path": None,
+        "score": 0.88,
+    }
+
+    with (
+        patch(
+            "src.services.retrieval.generate_embeddings",
+            new_callable=AsyncMock,
+            return_value=EmbeddingsResult(vectors=None, error="token missing"),
+        ),
+        patch(
+            "src.services.retrieval._keyword_search",
+            new_callable=AsyncMock,
+            return_value=[kw_hit],
+        ),
+    ):
+        result = asyncio.run(
+            retrieve_chunks("baskets pro rata ETF", mock_session, diversity_min=1, top_k=5),
+        )
+
+    assert len(result) >= 1
+    assert result[0]["text"] == "ETF basket rule text"
+    assert result[0]["id"] == 42
 
 
 # --- RRF and diversity tests ---

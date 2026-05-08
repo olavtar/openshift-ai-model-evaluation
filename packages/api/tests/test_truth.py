@@ -2,14 +2,12 @@
 """Tests for structured truth schema and truth generation service."""
 
 import asyncio
-import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.schemas.truth import AnswerTruth, RetrievalTruth, TruthMetadata, TruthPayload
-
 
 # --- Schema validation tests ---
 
@@ -47,6 +45,19 @@ def test_truth_payload_grounded_mode():
         ),
     )
     assert payload.retrieval_truth.evidence_mode == "grounded_from_manual_answer"
+
+
+def test_truth_payload_grounded_synthesis_mode():
+    """Should accept generated truth grounded through retrieval."""
+    payload = TruthPayload(
+        answer_truth=AnswerTruth(required_concepts=["concept"]),
+        retrieval_truth=RetrievalTruth(evidence_mode="grounded_from_synthesis"),
+        metadata=TruthMetadata(
+            generated_by_model="test-model",
+            generated_at=datetime(2026, 4, 23),
+        ),
+    )
+    assert payload.retrieval_truth.evidence_mode == "grounded_from_synthesis"
 
 
 def test_truth_payload_invalid_evidence_mode():
@@ -207,9 +218,8 @@ def test_extract_answer_truth_raises_on_api_error():
 
 def test_extract_answer_truth_raises_on_no_token():
     """Should raise RuntimeError when no API token is configured."""
-    from src.services.truth_generation import extract_answer_truth
-
     from src.core.config import settings
+    from src.services.truth_generation import extract_answer_truth
 
     settings.API_TOKEN = ""
 
@@ -390,6 +400,58 @@ def test_generate_truth_from_synthesis():
     assert result.retrieval_truth.expected_chunk_refs == ["chunk:42", "chunk:43"]
     assert result.metadata.generated_by_model == "test-judge"
     assert result.metadata.source_chunk_ids == [42, 43]
+
+
+def test_generate_truth_from_synthesis_can_ground_via_retrieval():
+    """Synthesized truth should use retrievable evidence when a session is provided."""
+    from src.services.truth_generation import generate_truth_from_synthesis
+
+    _setup_settings()
+
+    concepts_json = '["ETF basket anti-dumping safeguard"]'
+    mock_resp = _make_mock_response(concepts_json)
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_resp
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    retrieved_chunks = [
+        {
+            "id": 12,
+            "source_document": "33-10695.pdf",
+            "text": "The requirement addresses dumping less liquid securities.",
+            "score": 0.9,
+        }
+    ]
+    classification = {"required": ["33-10695.pdf"], "supporting": []}
+    mock_session = AsyncMock()
+
+    with (
+        patch("src.services.truth_generation.httpx.AsyncClient", return_value=mock_client),
+        patch(
+            "src.services.truth_generation.retrieve_chunks",
+            new_callable=AsyncMock,
+            return_value=retrieved_chunks,
+        ),
+        patch(
+            "src.services.truth_generation.classify_documents",
+            new_callable=AsyncMock,
+            return_value=classification,
+        ),
+    ):
+        result = asyncio.run(
+            generate_truth_from_synthesis(
+                "What is the purpose of the pro rata basket requirement?",
+                "The requirement addresses dumping less liquid securities.",
+                [{"id": 42, "source_document": "33-10695.pdf", "text": "source prompt"}],
+                "test-judge",
+                session=mock_session,
+            )
+        )
+
+    assert result.retrieval_truth.evidence_mode == "grounded_from_synthesis"
+    assert result.retrieval_truth.expected_chunk_refs == ["chunk:12"]
+    assert result.metadata.source_chunk_ids == [12]
 
 
 def test_generate_truth_from_manual_answer():

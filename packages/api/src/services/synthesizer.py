@@ -166,6 +166,7 @@ async def generate_questions(
     document_ids: list[int] | None = None,
     max_questions: int = 10,
     domain: str = "",
+    retrieval_kwargs: dict | None = None,
 ) -> list[dict]:
     """Generate evaluation questions from ingested document chunks.
 
@@ -179,6 +180,8 @@ async def generate_questions(
         max_questions: Maximum number of questions to generate.
         domain: Optional domain key (e.g. 'fsi') to generate
             domain-specific questions matching the evaluation profile.
+        retrieval_kwargs: Optional profile-driven retrieval parameters used
+            when grounding generated truth.
 
     Returns:
         List of dicts with 'question' and 'expected_answer' keys.
@@ -263,7 +266,12 @@ async def generate_questions(
                 if q.get("expected_answer"):
                     try:
                         truth = await generate_truth_from_synthesis(
-                            q["question"], q["expected_answer"], chunk_data, judge_model
+                            q["question"],
+                            q["expected_answer"],
+                            chunk_data,
+                            judge_model,
+                            session=session,
+                            retrieval_kwargs=retrieval_kwargs,
                         )
                         q["truth"] = truth
                     except Exception as e:
