@@ -120,8 +120,13 @@ function WinnerIcon({ winner }: { winner: string | null | undefined }) {
 
 function formatEvidenceMode(mode: string): string {
     if (mode === 'traced_from_synthesis') return 'Traced from synthesis';
+    if (mode === 'grounded_from_synthesis') return 'Grounded from synthesis';
     if (mode === 'grounded_from_manual_answer') return 'Grounded from manual answer';
     return mode.split('_').join(' ');
+}
+
+function isGroundedEvidenceMode(mode: string | undefined): boolean {
+    return mode === 'grounded_from_manual_answer' || mode === 'grounded_from_synthesis';
 }
 
 function formatCheckName(name: string): string {
@@ -284,9 +289,9 @@ function InlineDeterministicChecks({
     return (
         <div className="mt-1.5 flex flex-wrap gap-2 text-xs">
             {result.deterministic_checks.map((check, i) => {
-                const isManualTruth = evidenceMode === 'grounded_from_manual_answer';
+                const isGroundedTruth = isGroundedEvidenceMode(evidenceMode);
                 const isChunkAlignmentInfo =
-                    check.check_name === 'chunk_alignment' && !check.passed && isManualTruth;
+                    check.check_name === 'chunk_alignment' && !check.passed && isGroundedTruth;
                 const hasSupportingWarning =
                     check.passed && check.detail?.toLowerCase().includes('supporting documents');
                 const Icon = isChunkAlignmentInfo

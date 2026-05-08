@@ -90,10 +90,12 @@ transparency obligations if relevant; ongoing periodic reporting forms if releva
 Respond with a JSON array of strings. No other text.
 
 Example:
-Question: "What are the key requirements for ETF regulatory compliance?"
-Output: ["What registration, prospectus, and disclosure requirements apply to ETFs?", \
-"How do creation and redemption mechanisms work for ETFs, including authorized participants?", \
-"What periodic reporting and transparency requirements apply to ETFs?"]
+Question: "What are the disclosure requirements for an ETF filing?"
+Output: ["What core prospectus disclosures must ETFs provide including investment objectives, \
+strategies, risks, fees, performance, and tax information?", \
+"What ETF-specific trading and operational disclosures are required including NAV, market price, \
+premiums/discounts, creation/redemption mechanisms, and authorized participants?", \
+"What registration forms, ongoing reporting obligations, and transparency rules apply to ETFs?"]
 """
 
 

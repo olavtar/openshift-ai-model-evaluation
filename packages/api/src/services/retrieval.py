@@ -75,7 +75,9 @@ async def retrieve_chunks(
 
     Uses hybrid retrieval when keyword search is enabled: vector similarity
     and PostgreSQL full-text search merged via Reciprocal Rank Fusion (RRF).
-    Falls back to recent chunks if embeddings are unavailable.
+    If embeddings are unavailable, runs keyword search when enabled; only if that is
+    empty does it fall back to recent chunks (which are **not** query-specific—every
+    question would otherwise see the same context).
 
     Args:
         query: The search query.
@@ -95,22 +97,48 @@ async def retrieve_chunks(
         List of dicts with 'id', 'text', 'source_document', 'page_number',
         'section_path', 'score' keys, ordered by relevance.
     """
+    doc_count = 1
+    if diversity_min > 1:
+        doc_count = await _count_ready_documents(session)
+    search_depth = compute_search_depth(rerank_depth, diversity_min, doc_count)
+
     result = await generate_embeddings([query])
 
     if result.vectors:
-        # Widen the candidate pool so large documents cannot starve the
-        # diversity filter.  When diversity_min > 1, pull enough candidates
-        # that even a corpus dominated by one giant document still surfaces
-        # chunks from smaller ones. Capped via compute_search_depth for latency.
-        doc_count = 1
-        if diversity_min > 1:
-            doc_count = await _count_ready_documents(session)
-        search_depth = compute_search_depth(rerank_depth, diversity_min, doc_count)
         vector_results = await _vector_search(result.vectors[0], session, search_depth)
     else:
-        logger.info("No query embedding available -- falling back to recent chunks")
-        if result.error:
-            logger.info("Embedding issue: %s", result.error)
+        # Without vectors, never jump straight to "recent chunks" — that path ignores the
+        # query and makes every eval question receive identical context (same answers at temp 0).
+        logger.warning(
+            "No query embeddings (%s); trying keyword-only retrieval before non-query fallback",
+            result.error or "vectors absent",
+        )
+        keyword_only: list[dict] = []
+        if keyword_enabled:
+            keyword_only = await _keyword_search(query, session, search_depth)
+        if keyword_only:
+            deduped = _deduplicate_chunks(keyword_only, dedup_threshold)
+            final = _apply_diversity(
+                deduped,
+                top_k,
+                max_per_doc,
+                diversity_min,
+                diversity_relevance_threshold,
+            )
+            kw_doc_counts: dict[str, int] = defaultdict(int)
+            for chunk in final:
+                kw_doc_counts[chunk["source_document"]] += 1
+            logger.info(
+                "Embedding-less retrieval: keyword-only -> %d chunks, doc distribution: %s",
+                len(final),
+                dict(kw_doc_counts),
+            )
+            return final
+
+        logger.error(
+            "Embeddings unavailable and keyword search returned no hits — "
+            "using recent chunks (identical for all queries). Fix embedding service or corpus."
+        )
         return await _fallback_search(session, top_k)
 
     # Keyword search (graceful degradation: returns [] if not supported)

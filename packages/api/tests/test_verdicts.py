@@ -48,7 +48,7 @@ def test_load_fsi_compliance_profile():
     assert isinstance(profile.retrieval, RetrievalConfig)
     assert profile.retrieval.top_k == 8
     assert isinstance(profile.generation, GenerationConfig)
-    assert profile.generation.max_tokens == 2048
+    assert profile.generation.max_tokens == 768
 
 
 def test_fsi_profile_has_system_prompt():
@@ -444,6 +444,38 @@ def test_verdict_ignores_chunk_alignment_for_manual_truth(fsi_profile):
         fsi_profile,
         deterministic_checks=checks,
         evidence_mode="grounded_from_manual_answer",
+    )
+    assert verdict.verdict == "PASS"
+    assert "FAIL_RETRIEVAL_INCOMPLETE" not in verdict.fail_reasons
+
+
+def test_verdict_ignores_chunk_alignment_for_grounded_synthesis(fsi_profile):
+    """Should not force FAIL when synthesized truth was grounded via retrieval."""
+    scores = {
+        "groundedness_score": 0.9,
+        "relevancy_score": 0.8,
+        "abstention_score": 0.9,
+    }
+    checks = [
+        {
+            "check_name": "document_presence",
+            "passed": True,
+            "detail": "All required documents present",
+            "category": "retrieval",
+        },
+        {
+            "check_name": "chunk_alignment",
+            "passed": False,
+            "detail": "1/3",
+            "category": "retrieval",
+        },
+    ]
+
+    verdict = compute_question_verdict(
+        scores,
+        fsi_profile,
+        deterministic_checks=checks,
+        evidence_mode="grounded_from_synthesis",
     )
     assert verdict.verdict == "PASS"
     assert "FAIL_RETRIEVAL_INCOMPLETE" not in verdict.fail_reasons

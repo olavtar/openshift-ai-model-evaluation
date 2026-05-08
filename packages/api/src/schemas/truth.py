@@ -11,6 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+EvidenceMode = Literal[
+    "traced_from_synthesis",
+    "grounded_from_synthesis",
+    "grounded_from_manual_answer",
+]
+
 
 class AnswerTruth(BaseModel):
     """What the answer must contain."""
@@ -40,7 +46,7 @@ class RetrievalTruth(BaseModel):
         default_factory=list,
         description='Chunk refs from supporting documents, in "chunk:{id}" format.',
     )
-    evidence_mode: Literal["traced_from_synthesis", "grounded_from_manual_answer"] = Field(
+    evidence_mode: EvidenceMode = Field(
         ..., description="How retrieval truth was produced."
     )
 

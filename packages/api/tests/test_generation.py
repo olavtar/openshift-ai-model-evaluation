@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.generation import _build_context_block, _build_generation_payload, generate_answer
+from src.services.generation import (
+    _build_context_block,
+    _build_generation_payload,
+    _strip_reasoning_blocks,
+    generate_answer,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +65,47 @@ def test_build_context_block_formats_chunks():
     assert "Revenue grew 10%." in result
     assert "[Source 2: guide.pdf]" in result
     assert "page" not in result.split("[Source 2:")[1].split("]")[0]
+
+
+def test_strip_reasoning_blocks_removes_complete_think_block():
+    """Should remove reasoning blocks before scoring model answers."""
+    raw = "<think>work through sources</think>\n\nThe answer is 42."
+    assert _strip_reasoning_blocks(raw) == "The answer is 42."
+
+
+def test_strip_reasoning_blocks_removes_orphan_closing_think_block():
+    """DeepSeek-style orphan closing tags should drop leading reasoning."""
+    raw = "I will reason through this first.\n</think>\n\nThe requirement prevents dumping."
+    assert _strip_reasoning_blocks(raw) == "The requirement prevents dumping."
+
+
+def test_strip_reasoning_blocks_removes_redacted_thinking_pair():
+    """Moderated/stack paths may wrap reasoning in redacted_thinking tags."""
+    raw = (
+        "<"
+        + "redacted_thinking"
+        + ">hidden</"
+        + "redacted_thinking"
+        + ">\n\nVisible answer."
+    )
+    assert _strip_reasoning_blocks(raw) == "Visible answer."
+
+
+def test_build_generation_payload_uses_default_max_tokens():
+    """Default max_tokens should be 2048 when no base_max_tokens is provided."""
+    payload, _, max_tokens = _build_generation_payload(
+        question="What?",
+        chunks=[{"source_document": "doc.pdf", "page_number": "1", "text": "context"}],
+        model_name="granite-test",
+        system_prompt=None,
+        attempt=0,
+    )
+    assert payload["max_tokens"] == max_tokens == 2048
+
+
+def test_strip_reasoning_blocks_only_think_block():
+    """Should return empty string when answer is only a reasoning block."""
+    assert _strip_reasoning_blocks("<think>reasoning only</think>") == ""
 
 
 def test_returns_error_when_no_token():

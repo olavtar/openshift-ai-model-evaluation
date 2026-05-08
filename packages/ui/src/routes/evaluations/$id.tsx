@@ -117,8 +117,13 @@ function VerdictBadge({ verdict }: { verdict: string }) {
 
 function formatEvidenceMode(mode: string): string {
     if (mode === 'traced_from_synthesis') return 'Traced from synthesis';
+    if (mode === 'grounded_from_synthesis') return 'Grounded from synthesis';
     if (mode === 'grounded_from_manual_answer') return 'Grounded from manual answer';
     return mode.split('_').join(' ');
+}
+
+function isGroundedEvidenceMode(mode: string | undefined): boolean {
+    return mode === 'grounded_from_manual_answer' || mode === 'grounded_from_synthesis';
 }
 
 interface ParsedChunk {
@@ -370,13 +375,13 @@ function ResultRow({ result }: { result: EvalResult }) {
                             <h3 className="mb-1.5 text-sm font-semibold">Deterministic Checks</h3>
                             <div className="space-y-1">
                                 {result.deterministic_checks.map((check, i) => {
-                                    const isManualTruth =
-                                        truth?.retrieval_truth.evidence_mode ===
-                                        'grounded_from_manual_answer';
+                                    const isGroundedTruth = isGroundedEvidenceMode(
+                                        truth?.retrieval_truth.evidence_mode,
+                                    );
                                     const isChunkAlignmentInfo =
                                         check.check_name === 'chunk_alignment' &&
                                         !check.passed &&
-                                        isManualTruth;
+                                        isGroundedTruth;
                                     const hasSupportingWarning =
                                         check.passed &&
                                         check.detail?.toLowerCase().includes('supporting documents');

@@ -1,4 +1,4 @@
-# BU Demo Talking Points: RAG Evaluation for FSI Compliance
+# Talking Points: RAG Evaluation for FSI Compliance
 
 ## 1. The Problem
 
@@ -8,37 +8,27 @@ Today, teams evaluate models by hand: reading answers, spot-checking sources, ho
 
 This system gives compliance teams a repeatable, auditable way to evaluate any model against their own regulatory documents and get a clear PASS/FAIL/REVIEW verdict with a full evidence trail.
 
-
 ## 2. The Flow (What Happens When You Run an Evaluation)
 
 Here is the end-to-end sequence in plain language:
 
 1. **Upload documents** -- The user uploads SEC/FINRA regulatory PDFs (public filings, rule books, compliance manuals). The system chunks them, indexes them, and makes them searchable.
-
 2. **Get evaluation questions** -- Two options:
-   - **Auto-generate**: The system reads the uploaded documents and generates compliance-focused questions with expected answers. ("What are the filing requirements for Form N-1A?")
-   - **Bring your own**: The user provides a question set with expected answers from their compliance team.
-
+  - **Auto-generate**: The system reads the uploaded documents and generates compliance-focused questions with expected answers. ("What are the filing requirements for Form N-1A?")
+  - **Bring your own**: The user provides a question set with expected answers from their compliance team.
 3. **Build structured truth** -- For each question, the system creates a "truth payload":
-   - Extracts the key concepts from the expected answer (e.g., "must file Form N-1A", "publish daily NAV")
-   - Classifies which uploaded documents are *required* vs *supporting* for that question
-   - Maps specific document chunks to each question
-
+  - Extracts the key concepts from the expected answer (e.g., "must file Form N-1A", "publish daily NAV")
+  - Classifies which uploaded documents are *required* vs *supporting* for that question
+  - Maps specific document chunks to each question
 4. **Run the model** -- The system sends each question through the full RAG pipeline: retrieval (find relevant chunks from the uploaded docs) then generation (ask the model to answer using those chunks).
-
 5. **Check the retrieval first** -- Before even looking at the answer, the system runs deterministic checks:
-   - Did the retrieval pull back the required documents? (Document presence)
-   - Did it find the right chunks within those documents? (Chunk alignment)
-   - These are hard gates -- if retrieval fails, the question gets a FAIL verdict attributed to retrieval, not the model.
-
+  - Did the retrieval pull back the required documents? (Document presence)
+  - Did it find the right chunks within those documents? (Chunk alignment)
+  - These are hard gates -- if retrieval fails, the question gets a FAIL verdict attributed to retrieval, not the model.
 6. **Score the answer** -- An LLM judge scores the answer on eight dimensions: faithfulness, relevancy, completeness, correctness, compliance accuracy, context precision, context relevancy, and abstention quality.
-
 7. **Detect coverage gaps** -- The system checks which concepts from the expected answer are missing from the model's response, and classifies each gap: was the concept missing from the retrieved context (retrieval problem) or present in the context but omitted by the model (generation problem)?
-
 8. **Produce a verdict** -- Each question gets a PASS, FAIL, or REVIEW verdict based on the evaluation profile's thresholds. The run gets an aggregate verdict.
-
 9. **Compare models** -- Run the same questions against a different model and get a head-to-head comparison with a winner declaration, disqualification gates, and risk flags.
-
 
 ## 3. What Makes It Smart
 
@@ -57,6 +47,7 @@ Instead of comparing raw text, the system breaks the expected answer into discre
 ### Deterministic Checks as Hard Gates
 
 Before any LLM judge scores run, the system applies fast, rule-based checks:
+
 - **Document presence**: Were the required regulatory documents retrieved?
 - **Chunk alignment**: Were the right sections within those documents found?
 - **Abstention validation**: Did the model correctly refuse to answer when it lacked context?
@@ -69,6 +60,7 @@ The retrieval checks (document presence, chunk alignment) act as hard gates. If 
 ### Verdict Attribution (Retrieval vs Generation Failures)
 
 When something goes wrong, the system tells you *where* it went wrong:
+
 - **Retrieval failure**: The relevant information was not retrieved from the documents. Fix the chunking, embeddings, or retrieval configuration.
 - **Generation failure**: The information was in the retrieved context, but the model ignored or misrepresented it. This is a model quality issue.
 
@@ -77,6 +69,7 @@ When something goes wrong, the system tells you *where* it went wrong:
 ### LLM-as-Judge Scoring (Eight Dimensions)
 
 The system uses a separate judge model to score answers on dimensions specifically chosen for compliance use cases:
+
 - **Faithfulness**: Is every claim grounded in the retrieved documents? (Below 70% is flagged as hallucination.)
 - **Relevancy**: Does the answer address the question?
 - **Completeness**: Are all key points from the expected answer covered?
@@ -94,6 +87,7 @@ For every question with an expected answer, the system identifies exactly which 
 ### Head-to-Head Comparison with Disqualification Gates
 
 When comparing two models, the system applies a structured decision framework:
+
 1. **Disqualification gates**: If a model's average completeness, correctness, or compliance accuracy falls below the profile threshold, it is disqualified -- it cannot win regardless of other metrics.
 2. **Verdict comparison**: PASS beats REVIEW beats FAIL.
 3. **Failure counts**: Fewer critical failures wins.
@@ -106,13 +100,13 @@ The result is a clear "Model A wins because..." with supporting evidence, risk f
 ### Profile-Driven Evaluation
 
 Everything -- thresholds, retrieval configuration, system prompts, scoring criteria -- is controlled by a YAML profile. The FSI compliance profile includes:
+
 - Pass/fail thresholds for each metric (e.g., faithfulness must be above 70%)
 - Critical thresholds that trigger immediate failure (e.g., faithfulness below 50%)
 - Retrieval parameters tuned for regulatory document corpora (15 chunks, 6-document diversity minimum, hybrid search enabled)
 - A compliance-specific system prompt that instructs the model to cite sources and never invent regulatory references
 
 **Why this matters:** Different customers, different risk tolerance. A profile can be tuned per use case -- stricter for client-facing advisory, more permissive for internal research.
-
 
 ## 4. Demo Walkthrough
 
@@ -165,7 +159,6 @@ Everything -- thresholds, retrieval configuration, system prompts, scoring crite
 **Aggregate metrics:** "The side-by-side metric comparison shows where each model is stronger. Note the compliance accuracy and faithfulness rows -- these are weighted highest because they matter most for compliance use cases."
 
 **Per-question breakdown:** "At the bottom, you can see each question with both models' answers side by side, their verdicts, deterministic check results, and coverage gaps. This is where a compliance officer can drill into specific scenarios -- 'Did Model A or Model B handle suitability obligations better?'"
-
 
 ## 5. Customer Value Proposition
 

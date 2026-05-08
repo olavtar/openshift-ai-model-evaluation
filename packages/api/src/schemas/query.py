@@ -32,7 +32,7 @@ class QueryRequest(BaseModel):
         default_factory=lambda: settings.MODEL_A_NAME,
         description="Name of the model to use for generation.",
     )
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve.")
+    top_k: int | None = Field(default=None, ge=1, le=20, description="Number of chunks to retrieve. Uses profile default when omitted.")
 
 
 class QueryResponse(BaseModel):

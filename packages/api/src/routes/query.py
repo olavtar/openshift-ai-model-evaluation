@@ -66,16 +66,44 @@ async def query(
             safety_filtered=True,
         )
 
+    # Load profile retrieval config so chat uses the same pipeline as evaluation
+    retrieval_kwargs: dict = {}
+    system_prompt: str | None = None
+    gen_max_tokens: int | None = None
+    try:
+        profile = load_profile("fsi_compliance_v1")
+        r = profile.retrieval
+        retrieval_kwargs = {
+            "top_k": r.top_k,
+            "max_per_doc": r.max_chunks_per_document,
+            "rerank_depth": r.rerank_depth,
+            "diversity_min": r.document_diversity_min,
+            "keyword_enabled": r.keyword_search_enabled,
+            "dedup_threshold": r.dedup_threshold,
+            "diversity_relevance_threshold": r.diversity_relevance_threshold,
+        }
+        if profile.system_prompt:
+            system_prompt = profile.system_prompt
+        if profile.generation and profile.generation.max_tokens:
+            gen_max_tokens = profile.generation.max_tokens
+    except (FileNotFoundError, ValueError) as e:
+        logger.warning("Could not load chat profile: %s", e)
+
+    if request.top_k is not None:
+        retrieval_kwargs["top_k"] = request.top_k
+
     chunks = await retrieve_chunks(
         query=request.question,
         session=session,
-        top_k=request.top_k,
+        **retrieval_kwargs,
     )
 
     result = await generate_answer(
         question=request.question,
         chunks=chunks,
         model_name=request.model_name,
+        system_prompt=system_prompt,
+        max_tokens=gen_max_tokens,
     )
 
     # Post-generation safety check on model output
