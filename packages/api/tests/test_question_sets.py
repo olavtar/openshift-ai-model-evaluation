@@ -118,6 +118,125 @@ def test_delete_question_set_cascades_eval_runs(client):
     assert get_eval.status_code == 404
 
 
+# --- PATCH tests ---
+
+
+def test_update_question_set_name(client):
+    """Should update only the name when questions are not provided."""
+    create_resp = client.post(
+        "/question-sets/",
+        json={"name": "Original", "questions": [{"question": "Q1"}]},
+    )
+    qs_id = create_resp.json()["id"]
+
+    patch_resp = client.patch(f"/question-sets/{qs_id}", json={"name": "Renamed"})
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["name"] == "Renamed"
+    assert data["questions"][0]["question"] == "Q1"
+
+
+def test_update_question_set_questions(client):
+    """Should update only the questions when name is not provided."""
+    create_resp = client.post(
+        "/question-sets/",
+        json={"name": "Keep Name", "questions": [{"question": "Old Q"}]},
+    )
+    qs_id = create_resp.json()["id"]
+
+    patch_resp = client.patch(
+        f"/question-sets/{qs_id}",
+        json={"questions": [{"question": "New Q1"}, {"question": "New Q2"}]},
+    )
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["name"] == "Keep Name"
+    assert len(data["questions"]) == 2
+    assert data["questions"][0]["question"] == "New Q1"
+
+
+def test_update_question_set_both(client):
+    """Should update both name and questions when both provided."""
+    create_resp = client.post(
+        "/question-sets/",
+        json={"name": "Old", "questions": [{"question": "Old Q"}]},
+    )
+    qs_id = create_resp.json()["id"]
+
+    patch_resp = client.patch(
+        f"/question-sets/{qs_id}",
+        json={"name": "New", "questions": [{"question": "New Q"}]},
+    )
+    assert patch_resp.status_code == 200
+    data = patch_resp.json()
+    assert data["name"] == "New"
+    assert data["questions"][0]["question"] == "New Q"
+
+
+def test_update_question_set_not_found(client):
+    """Should return 404 for non-existent question set."""
+    response = client.patch("/question-sets/999", json={"name": "Nope"})
+    assert response.status_code == 404
+
+
+def test_update_question_set_preserves_existing_truth(client, monkeypatch):
+    """Should preserve truth payloads on questions that already have them."""
+    monkeypatch.setattr(settings, "JUDGE_MODEL_NAME", "test-judge", raising=False)
+    truth = _make_truth_payload()
+
+    with patch(
+        "src.routes.question_sets.generate_truth_from_manual_answer",
+        new_callable=AsyncMock,
+        return_value=truth,
+    ):
+        create_resp = client.post(
+            "/question-sets/",
+            json={
+                "name": "Truth Set",
+                "questions": [
+                    {"question": "What is AI?", "expected_answer": "Artificial intelligence."},
+                ],
+            },
+        )
+
+    qs_id = create_resp.json()["id"]
+    created_truth = create_resp.json()["questions"][0]["truth"]
+
+    with patch(
+        "src.routes.question_sets.generate_truth_from_manual_answer",
+        new_callable=AsyncMock,
+    ) as mock_gen:
+        patch_resp = client.patch(
+            f"/question-sets/{qs_id}",
+            json={
+                "questions": [
+                    {
+                        "question": "What is AI?",
+                        "expected_answer": "Artificial intelligence.",
+                        "truth": created_truth,
+                    },
+                ],
+            },
+        )
+
+    assert patch_resp.status_code == 200
+    mock_gen.assert_not_called()
+    assert patch_resp.json()["questions"][0]["truth"] is not None
+
+
+def test_update_question_set_includes_updated_at(client):
+    """Should return updated_at in the response."""
+    create_resp = client.post(
+        "/question-sets/",
+        json={"name": "Timestamps", "questions": [{"question": "Q1"}]},
+    )
+    qs_id = create_resp.json()["id"]
+
+    patch_resp = client.patch(f"/question-sets/{qs_id}", json={"name": "Updated"})
+    assert patch_resp.status_code == 200
+    assert "updated_at" in patch_resp.json()
+
+
 # --- Truth generation tests ---
 
 

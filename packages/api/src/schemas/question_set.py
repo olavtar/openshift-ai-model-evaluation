@@ -29,6 +29,16 @@ class QuestionSetCreate(BaseModel):
     )
 
 
+class QuestionSetUpdate(BaseModel):
+    """Request to partially update a question set."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    questions: list[str | QuestionSetItem] | None = Field(default=None, min_length=1, max_length=100)
+    profile_id: str | None = Field(
+        default=None, description="Evaluation profile to use for truth generation retrieval config."
+    )
+
+
 class QuestionSetResponse(BaseModel):
     """Response for a question set."""
 
@@ -36,5 +46,6 @@ class QuestionSetResponse(BaseModel):
     name: str
     questions: list[QuestionSetItem]
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
