@@ -13,6 +13,7 @@ export const QuestionSetSchema = z.object({
     name: z.string(),
     questions: z.array(QuestionSetItemSchema),
     created_at: z.string().nullable().optional(),
+    updated_at: z.string().nullable().optional(),
 });
 
 export type QuestionSetItem = z.infer<typeof QuestionSetItemSchema>;

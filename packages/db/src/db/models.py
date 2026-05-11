@@ -93,6 +93,7 @@ class QuestionSet(Base):
     name = Column(String(200), nullable=False)
     questions = Column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     eval_runs = relationship("EvalRun", back_populates="question_set", cascade="all, delete-orphan")
 

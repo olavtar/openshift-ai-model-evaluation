@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..core.config import settings
-from ..schemas.question_set import QuestionSetCreate, QuestionSetItem, QuestionSetResponse
+from ..schemas.question_set import (
+    QuestionSetCreate,
+    QuestionSetItem,
+    QuestionSetResponse,
+    QuestionSetUpdate,
+)
 from ..services.profiles import RetrievalConfig, load_profile
 from ..services.truth_generation import generate_truth_from_manual_answer
 
@@ -35,30 +40,29 @@ def _build_response(qs: QuestionSet) -> QuestionSetResponse:
         name=qs.name,
         questions=items,
         created_at=cast(datetime, qs.created_at),
+        updated_at=cast(datetime | None, getattr(qs, "updated_at", None)),
     )
 
 
-@router.post("/", response_model=QuestionSetResponse, status_code=201)
-async def create_question_set(
-    request: QuestionSetCreate,
-    session: AsyncSession = Depends(get_db),
-) -> QuestionSetResponse:
-    """Save a reusable set of evaluation questions."""
-    normalized = []
-    for q in request.questions:
+async def _normalize_and_enrich(
+    questions: list[str | QuestionSetItem],
+    profile_id: str | None,
+    session: AsyncSession,
+) -> list[dict]:
+    """Normalize questions and generate truth payloads where needed."""
+    normalized: list[dict] = []
+    for q in questions:
         if isinstance(q, str):
             normalized.append({"question": q})
         else:
             normalized.append(q.model_dump(mode="json", exclude_none=True))
 
-    # Generate truth for questions with expected answers but no truth.
-    # Use profile retrieval config when provided, otherwise RetrievalConfig defaults.
     judge_model = settings.resolved_judge_model_name
     if judge_model:
         retrieval_cfg = RetrievalConfig()
-        if request.profile_id:
+        if profile_id:
             try:
-                prof = load_profile(request.profile_id)
+                prof = load_profile(profile_id)
                 retrieval_cfg = prof.retrieval
             except (FileNotFoundError, ValueError):
                 pass
@@ -84,6 +88,17 @@ async def create_question_set(
                     q["truth"] = truth.model_dump(mode="json")
                 except Exception as e:
                     logger.warning("Truth generation failed for manual question: %s", e)
+
+    return normalized
+
+
+@router.post("/", response_model=QuestionSetResponse, status_code=201)
+async def create_question_set(
+    request: QuestionSetCreate,
+    session: AsyncSession = Depends(get_db),
+) -> QuestionSetResponse:
+    """Save a reusable set of evaluation questions."""
+    normalized = await _normalize_and_enrich(request.questions, request.profile_id, session)
 
     qs = QuestionSet(name=request.name, questions=normalized)
     session.add(qs)
@@ -112,6 +127,30 @@ async def get_question_set(
     if not qs:
         raise HTTPException(status_code=404, detail="Question set not found")
     return _build_response(qs)
+
+
+@router.patch("/{question_set_id}", response_model=QuestionSetResponse)
+async def update_question_set(
+    question_set_id: int,
+    request: QuestionSetUpdate,
+    session: AsyncSession = Depends(get_db),
+) -> QuestionSetResponse:
+    """Partially update a question set (name, questions, or both)."""
+    qs = await session.get(QuestionSet, question_set_id)
+    if not qs:
+        raise HTTPException(status_code=404, detail="Question set not found")
+
+    if request.name is not None:
+        qs.name = request.name
+
+    if request.questions is not None:
+        qs.questions = await _normalize_and_enrich(request.questions, request.profile_id, session)
+
+    await session.flush()
+    await session.refresh(qs)
+    response = _build_response(qs)
+    await session.commit()
+    return response
 
 
 @router.delete("/{question_set_id}", status_code=204)

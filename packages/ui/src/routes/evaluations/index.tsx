@@ -1,7 +1,7 @@
 // This project was developed with assistance from AI tools.
 
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     useEvalRuns,
     useCreateEvalRun,
@@ -15,6 +15,7 @@ import { useDocuments } from '../../hooks/documents';
 import {
     useQuestionSets,
     useCreateQuestionSet,
+    useUpdateQuestionSet,
     useDeleteQuestionSet,
 } from '../../hooks/question-sets';
 import {
@@ -25,11 +26,11 @@ import {
     ArrowRight,
     Loader2,
     AlertTriangle,
-    Save,
     XCircle,
     FileText,
-
     CheckCircle2,
+    CloudOff,
+    Check,
 } from 'lucide-react';
 import type { EvalRun } from '../../schemas/evaluation';
 import type { EvalQuestionInput } from '../../services/evaluation';
@@ -141,6 +142,47 @@ function RunRow({
     );
 }
 
+function formatTimeSince(date: Date): string {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 10) return 'Saved just now';
+    if (seconds < 60) return `Saved ${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `Saved ${minutes}m ago`;
+    return `Saved ${Math.floor(minutes / 60)}h ago`;
+}
+
+function SaveIndicator({ lastSavedAt, isSaving, hasError }: {
+    lastSavedAt: Date | undefined;
+    isSaving: boolean;
+    hasError: boolean;
+}) {
+    if (hasError) {
+        return (
+            <span className="flex items-center gap-1 text-xs text-destructive">
+                <CloudOff className="h-3 w-3" />
+                Save failed
+            </span>
+        );
+    }
+    if (isSaving) {
+        return (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Saving...
+            </span>
+        );
+    }
+    if (lastSavedAt) {
+        return (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Check className="h-3 w-3 text-green-500" />
+                {formatTimeSince(lastSavedAt)}
+            </span>
+        );
+    }
+    return null;
+}
+
 function NewEvalForm({
     onCreated,
     onCancel,
@@ -157,16 +199,23 @@ function NewEvalForm({
     const { data: profiles } = useProfiles();
     const createMutation = useCreateEvalRun();
     const synthesizeMutation = useSynthesizeQuestions();
-    const saveSetMutation = useCreateQuestionSet();
+    const createSetMutation = useCreateQuestionSet();
+    const updateSetMutation = useUpdateQuestionSet();
     const deleteSetMutation = useDeleteQuestionSet();
     const [selectedModel, setSelectedModel] = useState('');
     const [selectedProfile, setSelectedProfile] = useState('');
     const [questions, setQuestions] = useState<EvalQuestionInput[]>(initialQuestions ?? []);
     const [warningMessage, setWarningMessage] = useState('');
-    const [loadedSetId, setLoadedSetId] = useState<number | undefined>(initialQuestionSetId);
-    const [saveSetName, setSaveSetName] = useState('');
-    const [showSaveSet, setShowSaveSet] = useState(false);
-    const [showSetList, setShowSetList] = useState(false);
+    const [activeSetId, setActiveSetId] = useState<number | undefined>(initialQuestionSetId);
+    const [activeSetName, setActiveSetName] = useState('');
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [lastSavedAt, setLastSavedAt] = useState<Date | undefined>();
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const activeSetIdRef = useRef(activeSetId);
+
+    useEffect(() => {
+        activeSetIdRef.current = activeSetId;
+    }, [activeSetId]);
 
     useEffect(() => {
         if (profiles && profiles.length > 0 && !selectedProfile) {
@@ -174,14 +223,105 @@ function NewEvalForm({
         }
     }, [profiles, selectedProfile]);
 
+    useEffect(() => {
+        if (initialQuestionSetId && questionSets) {
+            const set = questionSets.find((s) => s.id === initialQuestionSetId);
+            if (set) setActiveSetName(set.name);
+        }
+    }, [initialQuestionSetId, questionSets]);
+
+    useEffect(() => {
+        return () => {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        };
+    }, []);
+
+    const scheduleSave = useCallback((questionsToSave: EvalQuestionInput[]) => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        const validQuestions = questionsToSave.filter((q) => q.question.trim());
+        if (validQuestions.length === 0) return;
+
+        saveTimerRef.current = setTimeout(() => {
+            const currentSetId = activeSetIdRef.current;
+            if (currentSetId) {
+                updateSetMutation.mutate(
+                    { id: currentSetId, questions: validQuestions, profileId: selectedProfile || undefined },
+                    { onSuccess: () => setLastSavedAt(new Date()) },
+                );
+            } else {
+                const autoName = `Question Set - ${new Date().toLocaleString()}`;
+                createSetMutation.mutate(
+                    { name: autoName, questions: validQuestions, profileId: selectedProfile || undefined },
+                    {
+                        onSuccess: (data) => {
+                            setActiveSetId(data.id);
+                            setActiveSetName(data.name);
+                            setLastSavedAt(new Date());
+                        },
+                    },
+                );
+            }
+        }, 1500);
+    }, [selectedProfile, updateSetMutation, createSetMutation]);
+
+    const updateQuestions = useCallback((newQuestions: EvalQuestionInput[]) => {
+        setQuestions(newQuestions);
+        scheduleSave(newQuestions);
+    }, [scheduleSave]);
+
     const addQuestion = () => {
         setQuestions([...questions, { question: '', expected_answer: '' }]);
-        setLoadedSetId(undefined);
     };
 
     const removeQuestion = (index: number) => {
-        setQuestions(questions.filter((_, i) => i !== index));
-        setLoadedSetId(undefined);
+        const newQuestions = questions.filter((_, i) => i !== index);
+        updateQuestions(newQuestions);
+    };
+
+    const handleSelectSet = (setId: string) => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        if (setId === '') {
+            setActiveSetId(undefined);
+            setActiveSetName('');
+            setQuestions([]);
+            setLastSavedAt(undefined);
+        } else {
+            const set = questionSets?.find((s) => s.id === Number(setId));
+            if (set) {
+                setQuestions(set.questions.map((q) => ({
+                    question: q.question,
+                    expected_answer: q.expected_answer,
+                    truth: q.truth ?? undefined,
+                })));
+                setActiveSetId(set.id);
+                setActiveSetName(set.name);
+                setLastSavedAt(set.updated_at ? new Date(set.updated_at) : undefined);
+            }
+        }
+    };
+
+    const handleRenameSave = () => {
+        setIsEditingName(false);
+        if (activeSetId && activeSetName.trim()) {
+            updateSetMutation.mutate(
+                { id: activeSetId, name: activeSetName.trim() },
+                { onSuccess: () => setLastSavedAt(new Date()) },
+            );
+        }
+    };
+
+    const handleDeleteActiveSet = () => {
+        if (!activeSetId) return;
+        if (window.confirm(`Delete question set "${activeSetName}"? This will also delete all evaluation runs linked to this set.`)) {
+            deleteSetMutation.mutate(activeSetId, {
+                onSuccess: () => {
+                    setActiveSetId(undefined);
+                    setActiveSetName('');
+                    setQuestions([]);
+                    setLastSavedAt(undefined);
+                },
+            });
+        }
     };
 
     const handleSynthesize = () => {
@@ -198,8 +338,8 @@ function NewEvalForm({
                         (g) => !questions.some((q) => q.question === g.question),
                     );
                     if (unique.length > 0) {
-                        setQuestions([...questions, ...unique]);
-                        setLoadedSetId(undefined);
+                        const merged = [...questions, ...unique];
+                        updateQuestions(merged);
                     }
                 },
             },
@@ -207,24 +347,50 @@ function NewEvalForm({
     };
 
     const handleSubmit = () => {
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         const validQuestions = questions.filter((q) => q.question.trim());
         if (!selectedModel || validQuestions.length === 0) return;
-        createMutation.mutate(
-            { modelName: selectedModel, questions: validQuestions, questionSetId: loadedSetId, profileId: selectedProfile || undefined },
-            {
-                onSuccess: (data) => {
-                    if (data.message.includes('Warning')) {
-                        setWarningMessage(data.message);
-                    }
-                    setQuestions([]);
-                    setSelectedModel('');
-                    onCreated();
+
+        const doSubmit = (questionSetId: number | undefined) => {
+            createMutation.mutate(
+                { modelName: selectedModel, questions: validQuestions, questionSetId, profileId: selectedProfile || undefined },
+                {
+                    onSuccess: (data) => {
+                        if (data.message.includes('Warning')) {
+                            setWarningMessage(data.message);
+                        }
+                        setQuestions([]);
+                        setSelectedModel('');
+                        onCreated();
+                    },
                 },
-            },
-        );
+            );
+        };
+
+        if (activeSetId) {
+            updateSetMutation.mutate(
+                { id: activeSetId, questions: validQuestions, profileId: selectedProfile || undefined },
+                { onSuccess: () => doSubmit(activeSetId) },
+            );
+        } else if (validQuestions.length > 0) {
+            const autoName = `Question Set - ${new Date().toLocaleString()}`;
+            createSetMutation.mutate(
+                { name: autoName, questions: validQuestions, profileId: selectedProfile || undefined },
+                {
+                    onSuccess: (data) => {
+                        setActiveSetId(data.id);
+                        doSubmit(data.id);
+                    },
+                },
+            );
+        } else {
+            doSubmit(undefined);
+        }
     };
 
     const validQuestionCount = questions.filter((q) => q.question.trim()).length;
+    const isSaving = createSetMutation.isPending || updateSetMutation.isPending;
+    const saveHasError = createSetMutation.isError || updateSetMutation.isError;
 
     return (
         <div className="rounded-xl border bg-card p-6">
@@ -232,9 +398,10 @@ function NewEvalForm({
 
             {/* Step 1 -- Setup */}
             <div className="mb-6">
-                <h4 className="mb-4 text-sm font-medium text-muted-foreground">
-                    Step 1 -- Setup
-                </h4>
+                <div className="mb-4 flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">1</span>
+                    <h4 className="text-sm font-semibold">Step 1 -- Setup</h4>
+                </div>
 
                 <div className="mb-4">
                     <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
@@ -278,88 +445,68 @@ function NewEvalForm({
                 )}
             </div>
 
-            <hr className="mb-6 border-border" />
+            <div className="mb-6 border-t-2 border-blue-600/20" />
 
             {/* Step 2 -- Questions */}
             <div className="mb-6">
-                <div className="mb-4 flex items-center justify-between">
-                    <h4 className="text-sm font-medium text-muted-foreground">
-                        Step 2 -- Questions ({validQuestionCount})
-                    </h4>
-                    <div className="flex items-center gap-2">
-                        {loadedSetId && (
-                            <button
-                                onClick={() => {
-                                    const setName = questionSets?.find((s) => s.id === loadedSetId)?.name;
-                                    if (window.confirm(`Delete question set "${setName}"?`)) {
-                                        deleteSetMutation.mutate(loadedSetId, {
-                                            onSuccess: () => {
-                                                setLoadedSetId(undefined);
-                                            },
-                                        });
-                                    }
-                                }}
-                                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                                title="Delete loaded question set"
-                            >
-                                <Trash2 className="h-3 w-3" />
-                                Delete set
-                            </button>
-                        )}
-                        {questionSets && questionSets.length > 0 && (
-                            <div className="relative">
+                <div className="mb-4 flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">2</span>
+                    <h4 className="text-sm font-semibold">Step 2 -- Questions ({validQuestionCount})</h4>
+                </div>
+
+                {/* Question Set Selector */}
+                <div className="mb-4 rounded-lg border bg-muted/30 p-4">
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                        Question Set
+                    </label>
+                    <select
+                        value={activeSetId ?? ''}
+                        onChange={(e) => handleSelectSet(e.target.value)}
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                    >
+                        <option value="">New question set</option>
+                        {questionSets?.map((s) => (
+                            <option key={s.id} value={s.id}>
+                                {s.name} ({s.questions.length}q)
+                            </option>
+                        ))}
+                    </select>
+
+                    {activeSetId && (
+                        <div className="mt-2 flex items-center gap-2">
+                            {isEditingName ? (
+                                <input
+                                    type="text"
+                                    value={activeSetName}
+                                    onChange={(e) => setActiveSetName(e.target.value)}
+                                    onBlur={handleRenameSave}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSave(); }}
+                                    className="flex-1 rounded border bg-background px-2 py-1 text-sm outline-none focus:border-primary/50"
+                                    autoFocus
+                                />
+                            ) : (
                                 <button
-                                    onClick={() => setShowSetList((v) => !v)}
-                                    className="rounded-lg border bg-background px-2 py-1 text-xs"
+                                    onClick={() => setIsEditingName(true)}
+                                    className="flex-1 truncate rounded px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
+                                    title="Click to rename"
                                 >
-                                    Load Question Set
+                                    {activeSetName}
                                 </button>
-                                {showSetList && (
-                                    <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border bg-popover p-1 shadow-md">
-                                        {questionSets.map((s) => (
-                                            <div
-                                                key={s.id}
-                                                className="flex items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-accent"
-                                            >
-                                                <button
-                                                    className="flex-1 text-left"
-                                                    onClick={() => {
-                                                        setQuestions(s.questions.map((q) => ({
-                                                            question: q.question,
-                                                            expected_answer: q.expected_answer,
-                                                            truth: q.truth ?? undefined,
-                                                        })));
-                                                        setLoadedSetId(s.id);
-                                                        setShowSetList(false);
-                                                    }}
-                                                >
-                                                    {s.name} ({s.questions.length}q)
-                                                </button>
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        if (window.confirm(`Delete question set "${s.name}"?`)) {
-                                                            deleteSetMutation.mutate(s.id, {
-                                                                onSuccess: () => {
-                                                                    if (loadedSetId === s.id) {
-                                                                        setLoadedSetId(undefined);
-                                                                    }
-                                                                },
-                                                            });
-                                                        }
-                                                    }}
-                                                    className="ml-2 rounded p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                                                    title={`Delete "${s.name}"`}
-                                                >
-                                                    <Trash2 className="h-3 w-3" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                            )}
+                            <SaveIndicator
+                                lastSavedAt={lastSavedAt}
+                                isSaving={isSaving}
+                                hasError={saveHasError}
+                            />
+                            <button
+                                onClick={handleDeleteActiveSet}
+                                className="rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                                title="Delete question set"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="space-y-4">
@@ -384,7 +531,7 @@ function NewEvalForm({
                                     const updated = [...questions];
                                     updated[i] = { ...updated[i], question: e.target.value };
                                     setQuestions(updated);
-                                    setLoadedSetId(undefined);
+                                    scheduleSave(updated);
                                 }}
                                 className="mb-3 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
                                 placeholder="Enter your question"
@@ -398,8 +545,7 @@ function NewEvalForm({
                                         onClick={() => {
                                             const updated = [...questions];
                                             updated[i] = { ...updated[i], expected_answer: '' };
-                                            setQuestions(updated);
-                                            setLoadedSetId(undefined);
+                                            updateQuestions(updated);
                                         }}
                                         className="text-xs text-muted-foreground transition-colors hover:text-destructive"
                                     >
@@ -413,7 +559,7 @@ function NewEvalForm({
                                     const updated = [...questions];
                                     updated[i] = { ...updated[i], expected_answer: e.target.value || null };
                                     setQuestions(updated);
-                                    setLoadedSetId(undefined);
+                                    scheduleSave(updated);
                                 }}
                                 placeholder="Used to evaluate correctness and completeness"
                                 className="mt-1.5 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground outline-none focus:border-primary/50"
@@ -423,172 +569,56 @@ function NewEvalForm({
                     ))}
                 </div>
 
-                <button
-                    onClick={addQuestion}
-                    className="mt-3 flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-                >
-                    <Plus className="h-3.5 w-3.5" />
-                    Add Question
-                </button>
+                <div className="mt-3 flex items-center gap-3">
+                    <button
+                        onClick={addQuestion}
+                        className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Question
+                    </button>
+                    <button
+                        onClick={handleSynthesize}
+                        disabled={synthesizeMutation.isPending}
+                        className="flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                        {synthesizeMutation.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                            <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Generate Questions
+                    </button>
+                </div>
             </div>
 
-            <hr className="mb-6 border-border" />
+            <div className="mb-6 border-t-2 border-blue-600/20" />
 
-            {/* Step 3 -- Actions */}
+            {/* Step 3 -- Run */}
             <div>
-                {showSaveSet && (
-                    <div className="mb-4">
-                        <div className="flex gap-2">
-                            <input
-                                type="text"
-                                value={saveSetName}
-                                onChange={(e) => setSaveSetName(e.target.value)}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && saveSetName.trim()) {
-                                        const valid = questions.filter((q) => q.question.trim());
-                                        if (valid.length === 0) return;
-                                        saveSetMutation.mutate(
-                                            { name: saveSetName.trim(), questions: valid, profileId: selectedProfile || undefined },
-                                            {
-                                                onSuccess: (data) => {
-                                                    setLoadedSetId(data.id);
-                                                    setSaveSetName('');
-                                                    setShowSaveSet(false);
-                                                },
-                                            },
-                                        );
-                                    }
-                                }}
-                                placeholder="Name for this question set"
-                                className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm"
-                                autoFocus
-                            />
-                            <button
-                                onClick={() => {
-                                    if (!saveSetName.trim()) return;
-                                    const valid = questions.filter((q) => q.question.trim());
-                                    if (valid.length === 0) return;
-                                    saveSetMutation.mutate(
-                                        { name: saveSetName.trim(), questions: valid, profileId: selectedProfile || undefined },
-                                        {
-                                            onSuccess: (data) => {
-                                                setLoadedSetId(data.id);
-                                                setSaveSetName('');
-                                                setShowSaveSet(false);
-                                            },
-                                        },
-                                    );
-                                }}
-                                disabled={!saveSetName.trim() || saveSetMutation.isPending}
-                                className="flex items-center gap-1 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                            >
-                                {saveSetMutation.isPending ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                    <Save className="h-3.5 w-3.5" />
-                                )}
-                                Save
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowSaveSet(false);
-                                    setSaveSetName('');
-                                    saveSetMutation.reset();
-                                }}
-                                className="rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-accent"
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                        {saveSetMutation.isError && (
-                            <p className="mt-2 text-sm text-destructive">
-                                {saveSetMutation.error instanceof Error ? saveSetMutation.error.message : 'Failed to save question set'}
-                            </p>
-                        )}
-                    </div>
-                )}
-
-                <div className="grid grid-cols-3 divide-x divide-border rounded-lg border bg-muted/30">
-                    {/* Column 1: Step 3 -- Actions */}
-                    <div className="p-4">
-                        <h4 className="mb-3 text-sm font-medium">
-                            Step 3 &mdash; Actions
-                        </h4>
-                        <button
-                            onClick={handleSynthesize}
-                            disabled={synthesizeMutation.isPending}
-                            className="flex flex-col items-start gap-0.5 rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent disabled:opacity-50"
-                        >
-                            <span className="flex items-center gap-1.5 text-sm font-medium">
-                                {synthesizeMutation.isPending ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                    <Sparkles className="h-3.5 w-3.5" />
-                                )}
-                                Generate Questions
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                                Generate from documents
-                            </span>
-                        </button>
-                    </div>
-
-                    {/* Column 2: Manage Dataset */}
-                    <div className="p-4">
-                        <h4 className="mb-3 text-sm font-medium">
-                            Manage Dataset
-                        </h4>
-                        {questions.length > 0 && !showSaveSet && !loadedSetId ? (
-                            <button
-                                onClick={() => setShowSaveSet(true)}
-                                className="flex flex-col items-start gap-0.5 rounded-lg border bg-background px-4 py-3 text-left transition-colors hover:bg-accent"
-                            >
-                                <span className="flex items-center gap-1.5 text-sm font-medium">
-                                    <Save className="h-3.5 w-3.5" />
-                                    Save as question set
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                    Save it to reuse later
-                                </span>
-                            </button>
-                        ) : loadedSetId ? (
-                            <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-                                Saved as question set
-                            </p>
+                <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white">3</span>
+                    <h4 className="text-sm font-semibold">Step 3 -- Run</h4>
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleSubmit}
+                        disabled={!selectedModel || validQuestionCount === 0 || createMutation.isPending}
+                        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                    >
+                        {createMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                            <p className="px-1 text-xs text-muted-foreground">
-                                Add questions to save as a set
-                            </p>
+                            <BarChart3 className="h-4 w-4" />
                         )}
-                    </div>
-
-                    {/* Column 3: Run */}
-                    <div className="p-4">
-                        <h4 className="mb-3 text-sm font-medium">
-                            Run
-                        </h4>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={handleSubmit}
-                                disabled={!selectedModel || validQuestionCount === 0 || createMutation.isPending || saveSetMutation.isPending || showSaveSet}
-                                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-                            >
-                                {createMutation.isPending ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <BarChart3 className="h-4 w-4" />
-                                )}
-                                Run Evaluation
-                            </button>
-                            <button
-                                onClick={onCancel}
-                                className="rounded-lg border bg-background px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            >
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
+                        Run Evaluation
+                    </button>
+                    <button
+                        onClick={onCancel}
+                        className="rounded-lg border bg-background px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                        Cancel
+                    </button>
                 </div>
             </div>
 
