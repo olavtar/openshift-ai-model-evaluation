@@ -1,123 +1,25 @@
 // This project was developed with assistance from AI tools.
 
 import { Link } from '@tanstack/react-router';
-import { useEvalRuns, useCompareEvalRuns } from '../../hooks/evaluation';
+import { useEvalRuns } from '../../hooks/evaluation';
 import { useDocuments } from '../../hooks/documents';
+import { useModels, useModelMetadata } from '../../hooks/models';
 import {
     ArrowRight,
     BarChart3,
     GitCompareArrows,
     AlertTriangle,
+    CheckCircle2,
+    FileText,
+    Activity,
 } from 'lucide-react';
-import { formatScore, formatLatency } from '../../lib/format';
-
-function MetricCompareRow({
-    label,
-    valA,
-    valB,
-    format,
-    lowerIsBetter,
-}: {
-    label: string;
-    valA: number | null | undefined;
-    valB: number | null | undefined;
-    format: (v: number | null | undefined) => string;
-    lowerIsBetter?: boolean;
-}) {
-    const a = valA ?? null;
-    const b = valB ?? null;
-    let winnerA = false;
-    let winnerB = false;
-    if (a !== null && b !== null && Math.abs(a - b) >= 0.05) {
-        if (lowerIsBetter) {
-            winnerA = a < b;
-            winnerB = b < a;
-        } else {
-            winnerA = a > b;
-            winnerB = b > a;
-        }
-    }
-    return (
-        <div className="grid grid-cols-3 items-center gap-2 rounded-lg border px-3 py-2 text-sm">
-            <div className="text-muted-foreground">{label}</div>
-            <div className={`text-center font-medium ${winnerA ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
-                {format(a)}
-            </div>
-            <div className={`text-center font-medium ${winnerB ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
-                {format(b)}
-            </div>
-        </div>
-    );
-}
-
-function LatestComparison({ runAId, runBId }: { runAId: number; runBId: number }) {
-    const { data: comparison, isLoading } = useCompareEvalRuns(runAId, runBId);
-
-    if (isLoading) {
-        return (
-            <div className="mt-4 rounded-xl border bg-card p-4">
-                <p className="text-sm text-muted-foreground">Loading comparison...</p>
-            </div>
-        );
-    }
-
-    if (!comparison) return null;
-
-    const { run_a, run_b } = comparison;
-
-    return (
-        <div className="mt-4 rounded-xl border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold">Latest Comparison</h2>
-                <Link
-                    to="/evaluations/compare"
-                    search={{ run_a: runAId, run_b: runBId }}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                    Full comparison <ArrowRight className="inline h-3 w-3" />
-                </Link>
-            </div>
-            <div className="mb-2 grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                <div>Metric</div>
-                <div className="text-center">
-                    {run_a.model_name}
-                    {run_a.question_set_name && (
-                        <span className="ml-1 rounded bg-muted px-1 py-0.5">{run_a.question_set_name}</span>
-                    )}
-                </div>
-                <div className="text-center">
-                    {run_b.model_name}
-                    {run_b.question_set_name && (
-                        <span className="ml-1 rounded bg-muted px-1 py-0.5">{run_b.question_set_name}</span>
-                    )}
-                </div>
-            </div>
-            <div className="space-y-1">
-                <MetricCompareRow label="Faithfulness" valA={run_a.avg_groundedness} valB={run_b.avg_groundedness} format={formatScore} />
-                <MetricCompareRow label="Relevancy" valA={run_a.avg_relevancy} valB={run_b.avg_relevancy} format={formatScore} />
-                <MetricCompareRow label="Context Relevancy" valA={run_a.avg_context_relevancy} valB={run_b.avg_context_relevancy} format={formatScore} />
-                <MetricCompareRow
-                    label="Hallucination Rate"
-                    valA={run_a.hallucination_rate}
-                    valB={run_b.hallucination_rate}
-                    format={(v) => (v != null ? (v * 100).toFixed(0) + '%' : '--')}
-                    lowerIsBetter
-                />
-                <MetricCompareRow
-                    label="Avg Latency"
-                    valA={run_a.avg_latency_ms}
-                    valB={run_b.avg_latency_ms}
-                    format={formatLatency}
-                    lowerIsBetter
-                />
-            </div>
-        </div>
-    );
-}
+import { ModelSpecsCard, findModelMetadata } from './model-specs-card';
 
 export function OverviewPanel() {
     const { data: runs } = useEvalRuns();
     const { data: documents } = useDocuments();
+    const { data: models } = useModels();
+    const { data: metadataResponse } = useModelMetadata();
 
     const completedRuns =
         runs?.filter((r) => r.status === 'completed' || r.status === 'complete') ?? [];
@@ -129,87 +31,110 @@ export function OverviewPanel() {
           ? 'Documents ready'
           : 'Setup required';
     const comparisonReadinessIsWarning = !hasComparableRuns && !hasDocuments;
-    const latestComparablePair = hasComparableRuns
-        ? { runA: completedRuns[0].id, runB: completedRuns[1].id }
-        : null;
 
     return (
-        <div className="flex h-full flex-col overflow-y-auto p-4">
-            <div>
-                <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
+        <div className="flex h-full flex-col p-4">
+            <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2">
+                    <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    <h1 className="text-xl font-bold tracking-tight">Overview</h1>
+                </div>
+                <p className="mt-0.5 text-sm text-muted-foreground">
                     Evaluate and compare AI models on your compliance documents.
                 </p>
+                <div className="mt-2.5 flex gap-2">
+                    <Link
+                        to="/evaluations"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700"
+                    >
+                        <BarChart3 className="h-4 w-4" />
+                        Run New Evaluation
+                    </Link>
+                    <Link
+                        to="/evaluations/compare"
+                        search={{ run_a: 0, run_b: 0 }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+                    >
+                        <GitCompareArrows className="h-4 w-4" />
+                        Go to Comparisons
+                    </Link>
+                </div>
             </div>
 
-            <div className="mt-4 flex gap-2">
-                <Link
-                    to="/evaluations"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                    <BarChart3 className="h-4 w-4" />
-                    Run New Evaluation
-                </Link>
-                <Link
-                    to="/evaluations/compare"
-                    search={{ run_a: 0, run_b: 0 }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
-                >
-                    <GitCompareArrows className="h-4 w-4" />
-                    Go to Comparisons
-                </Link>
-            </div>
-
-            <div className="mt-4 rounded-xl border bg-card p-4">
-                <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-base font-semibold">Comparison Readiness</h2>
+            <div className="mt-3 rounded-xl border bg-card p-4">
+                <div className="mb-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        <h2 className="text-sm font-semibold">Comparison Readiness</h2>
+                    </div>
                     <span
-                        className={`inline-flex items-center gap-1 text-xs ${
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
                             comparisonReadinessIsWarning
-                                ? 'text-amber-600 dark:text-amber-400'
-                                : 'text-muted-foreground'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
                         }`}
                     >
-                        {comparisonReadinessIsWarning && (
-                            <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+                        {comparisonReadinessIsWarning ? (
+                            <AlertTriangle className="h-3 w-3" aria-hidden />
+                        ) : (
+                            <CheckCircle2 className="h-3 w-3" aria-hidden />
                         )}
                         {comparisonReadinessLabel}
                     </span>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2.5 sm:grid-cols-2">
                     <div className="rounded-lg border p-3">
-                        <div className="text-xs text-muted-foreground">Documents uploaded</div>
-                        <div className="mt-1 text-sm font-medium">
-                            {hasDocuments ? (
-                                `${documents?.length ?? 0} ready`
-                            ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <FileText className="h-3.5 w-3.5 text-blue-500" />
+                            Documents uploaded
+                        </div>
+                        {hasDocuments ? (
+                            <div className="mt-0.5 flex items-baseline gap-1.5">
+                                <span className="text-lg font-bold">{documents?.length ?? 0}</span>
+                                <span className="text-sm text-muted-foreground">ready</span>
+                            </div>
+                        ) : (
+                            <div className="mt-0.5">
                                 <Link
                                     to="/documents"
-                                    className="inline-flex items-center gap-1 text-primary underline underline-offset-4 hover:text-primary/80"
+                                    className="inline-flex items-center gap-1 text-sm text-primary underline underline-offset-4 hover:text-primary/80"
                                 >
                                     Upload at least one
                                     <ArrowRight className="h-3.5 w-3.5" />
                                 </Link>
-                            )}
-                        </div>
+                            </div>
+                        )}
                     </div>
                     <div className="rounded-lg border p-3">
-                        <div className="text-xs text-muted-foreground">Completed evaluations</div>
-                        <div className="mt-1 text-sm font-medium">
-                            {completedRuns.length >= 2
-                                ? `${completedRuns.length} available`
-                                : `${completedRuns.length}/2 complete`}
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <Activity className="h-3.5 w-3.5 text-emerald-500" />
+                            Completed evaluations
+                        </div>
+                        <div className="mt-0.5 flex items-baseline gap-1.5">
+                            <span className="text-lg font-bold">
+                                {completedRuns.length >= 2
+                                    ? completedRuns.length
+                                    : `${completedRuns.length}/2`}
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                                {completedRuns.length >= 2 ? 'available' : 'complete'}
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {hasComparableRuns && latestComparablePair && (
-                <LatestComparison
-                    runAId={latestComparablePair.runA}
-                    runBId={latestComparablePair.runB}
-                />
+            {models && models.length >= 2 && metadataResponse?.available && (
+                <div className="mt-3 flex min-h-0 flex-1 flex-col">
+                    <ModelSpecsCard
+                        modelAName={models[0].name}
+                        modelBName={models[1].name}
+                        metaA={findModelMetadata(metadataResponse?.models, models[0].name)}
+                        metaB={findModelMetadata(metadataResponse?.models, models[1].name)}
+                    />
+                </div>
             )}
+
         </div>
     );
 }

@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     MAAS_ENDPOINT: str = ""
     API_TOKEN: str = ""
 
+    # LiteLLM admin UI base URL (for model metadata: context length, pricing, capabilities)
+    LITELLM_ADMIN_URL: str = ""
+
     # Model names
     MODEL_A_NAME: str = ""
     MODEL_A_DEPLOYMENT_MODE: str = "maas"

@@ -60,3 +60,22 @@ def test_model_status_not_found(client):
     """Model status should return 404 for non-existent model."""
     response = client.get("/models/999/status")
     assert response.status_code == 404
+
+
+def test_model_metadata_endpoint_exists(client):
+    """Metadata endpoint should return 200."""
+    response = client.get("/models/metadata")
+    assert response.status_code == 200
+    data = response.json()
+    assert "models" in data
+    assert "available" in data
+
+
+def test_model_metadata_unavailable_when_no_url(client, monkeypatch):
+    """Should return available=false when LITELLM_ADMIN_URL is empty."""
+    monkeypatch.setattr(settings, "LITELLM_ADMIN_URL", "")
+    response = client.get("/models/metadata")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["available"] is False
+    assert data["models"] == []
