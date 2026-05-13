@@ -20,8 +20,10 @@ import {
     ChevronDown,
 } from 'lucide-react';
 import { useDocuments } from '../../hooks/documents';
+import { useModelMetadata } from '../../hooks/models';
 import type { ComparisonMetric, ComparisonResponse, CoverageGaps, EvalResult, EvalRun } from '../../schemas/evaluation';
 import { formatScore, formatLatency, formatMetricValue } from '../../lib/format';
+import { ModelSpecsCard, findModelMetadata } from '../../components/dashboard/model-specs-card';
 
 interface CompareSearch {
     run_a: number;
@@ -848,6 +850,7 @@ function ComparePage() {
     const { run_a, run_b } = Route.useSearch();
     const { data, isLoading, error } = useCompareEvalRuns(run_a, run_b);
     const { data: documents } = useDocuments();
+    const { data: metadataResponse } = useModelMetadata();
 
     useEffect(() => {
         if (data) {
@@ -913,6 +916,17 @@ function ComparePage() {
                 </button>
 
                 <ComparisonHeader data={data} docCount={readyDocCount} />
+
+                {metadataResponse?.available && (
+                    <div className="mb-8">
+                        <ModelSpecsCard
+                            modelAName={modelA}
+                            modelBName={modelB}
+                            metaA={findModelMetadata(metadataResponse?.models, modelA)}
+                            metaB={findModelMetadata(metadataResponse?.models, modelB)}
+                        />
+                    </div>
+                )}
 
                 <ExecutiveVerdictCard data={data} />
 

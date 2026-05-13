@@ -1,6 +1,13 @@
 // This project was developed with assistance from AI tools.
 
-import { ModelSchema, ModelStatusSchema, type Model, type ModelStatus } from '../schemas/models';
+import {
+    ModelSchema,
+    ModelStatusSchema,
+    ModelMetadataResponseSchema,
+    type Model,
+    type ModelStatus,
+    type ModelMetadataResponse,
+} from '../schemas/models';
 import { z } from 'zod';
 
 export const getModels = async (): Promise<Model[]> => {
@@ -19,4 +26,13 @@ export const getModelStatus = async (modelId: number): Promise<ModelStatus> => {
     }
     const data = await response.json();
     return ModelStatusSchema.parse(data);
+};
+
+export const getModelMetadata = async (): Promise<ModelMetadataResponse> => {
+    const response = await fetch('/api/models/metadata');
+    if (!response.ok) {
+        return { models: [], available: false };
+    }
+    const data = await response.json();
+    return ModelMetadataResponseSchema.parse(data);
 };

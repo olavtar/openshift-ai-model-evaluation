@@ -16,6 +16,19 @@ export function formatMetricValue(metric: string, val: number | null | undefined
     return (val * 100).toFixed(0) + '%';
 }
 
+export function formatContextLength(val: number | null | undefined): string {
+    if (val == null || val === 0) return '--';
+    if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M tokens`;
+    if (val >= 1_000) return `${(val / 1_000).toFixed(0)}K tokens`;
+    return `${val} tokens`;
+}
+
+export function formatTokenPrice(val: number | null | undefined): string {
+    if (val == null) return '--';
+    const perMillion = val * 1_000_000;
+    return `$${perMillion.toFixed(2)}/1M`;
+}
+
 export function formatUtcDate(val: string | null | undefined, style: 'date' | 'datetime' = 'datetime'): string {
     if (!val) return '';
     // API returns UTC timestamps without timezone suffix; append Z so

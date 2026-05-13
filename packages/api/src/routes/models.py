@@ -6,7 +6,13 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from ..core.config import settings
-from ..schemas.models import ModelResponse, ModelStatusResponse
+from ..schemas.models import (
+    ModelMetadata,
+    ModelMetadataResponse,
+    ModelResponse,
+    ModelStatusResponse,
+)
+from ..services.litellm_metadata import fetch_model_metadata
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,6 +44,21 @@ def _build_models() -> list[dict]:
             "is_active": True,
         },
     ]
+
+
+@router.get("/metadata", response_model=ModelMetadataResponse)
+async def list_model_metadata() -> ModelMetadataResponse:
+    """Fetch rich model metadata from the LiteLLM admin API.
+
+    Returns cached metadata (5-min TTL). Returns available=false
+    when LITELLM_ADMIN_URL is not configured.
+    """
+    if not settings.LITELLM_ADMIN_URL:
+        return ModelMetadataResponse(models=[], available=False)
+
+    raw = await fetch_model_metadata()
+    models = [ModelMetadata(**m) for m in raw]
+    return ModelMetadataResponse(models=models, available=True)
 
 
 @router.get("/", response_model=list[ModelResponse])
